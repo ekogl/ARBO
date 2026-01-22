@@ -1,0 +1,783 @@
+\documentclass[a4paper, 12pt]{article}
+
+% --- Packages ---
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{mathptmx}       % Professional Times New Roman-like font
+\usepackage{geometry}       % Adjust margins
+\geometry{a4paper, margin=2.5cm}
+\usepackage{amsmath, amssymb} % For math equations
+\usepackage{graphicx}       % For including images
+\usepackage{booktabs}       % For professional looking tables
+\usepackage{titlesec}       % Custom section formatting
+\usepackage{hyperref}       % Clickable links
+\usepackage{parskip}        % Nice spacing between paragraphs
+\usepackage{subcaption}
+\usepackage{tikz}
+\usetikzlibrary{shapes, arrows.meta, positioning, calc, shadows}
+
+% --- Header/Footer Customization (Optional) ---
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{Amdahl-Residual Bayesian Optimization}
+\rhead{Use-Case Report}
+\cfoot{\thepage}
+
+% --- Title Information ---
+\title{\textbf{Methodology Application: Amdahl Residual Optimization}\\
+	\large{Use Case Analysis and Performance Projections}}
+\author{\textbf{Your Name} \\ Student ID: 12345678}
+\date{\today}
+
+\begin{document}
+	
+	% --- Title Page ---
+	%\begin{titlepage}
+	%	\centering
+	%	\vspace*{1cm}
+	%	
+	%	{\Huge \textbf{Methodology Application Report}}
+	%	
+	%	\vspace{0.5cm}
+	%	{\Large Amdahl Residual Optimization (ARO)}
+	%	
+	%	\vspace{1.5cm}
+	%	
+	%	\textbf{Prepared for:} \\
+	%	Department of Computer Science \\
+	%	University Name
+	%	
+	%	\vspace{1.5cm}
+	%	
+	%	\textbf{Supervisor:} Dr. Jane Doe \\
+	%	\textbf{Professor:} Prof. John Smith
+	%	
+	%	\vspace{2cm}
+	%	
+	%	\textbf{Author:} \\
+	%	Your Name
+	%	
+	%	\vfill
+	%	
+	%	{\large \today}
+	%	
+	% \end{titlepage}
+	
+	% --- Main Content ---
+	
+	\section*{Overview}
+	This document outlines a specific use-case for the proposed methodology to a Genome analysis workflow (chunk size = $80{,}000$). Due to the nature of this application it requires a different degree of parallelism for different task. At first the proposed method is shown on the \texttt{individual} tasks and later a similar analysis is done for the \texttt{frequency} tasks.
+	
+	At first the baseline, which does not rely on any parallel processing that is tuned later, (see Figure~\ref{fig:baseline}) is run $3$ times, then the average is calculated.
+	
+	The tests were executed on my local machine (for now), results depend on machine used, but the trend should stay the same.
+	
+	\begin{figure}[h!]
+		\centering
+		\includegraphics[width=0.7\textwidth]{images/baseline}
+		\caption{DAG structure of baseline}
+		\label{fig:baseline}
+	\end{figure}
+	
+	\begin{table}[h!]
+		\centering
+		\vspace{0.2cm} % Adds a little breathing room between caption and table
+		\begin{tabular}{cccc}
+			\toprule
+			\textbf{Run} & \textbf{Total Time (s)} & \textbf{Time \texttt{individuals} (s)} & \textbf{Time \texttt{frequency} (s)} \\
+			\midrule
+			1 & 451 & 295 & 128\\
+			2 & 448 & 291 & 128\\
+			3 & 447 & 290 & 130\\
+			\midrule
+			\textbf{Average} & $\mathbf{449}$ & $\mathbf{292}$ & $\mathbf{129}$\\
+			\bottomrule
+		\end{tabular}
+		\caption{Results of baseline}
+		\label{tab:baseline}
+	\end{table}
+	
+	\section*{Individuals Analysis}
+	This part of the analysis only tunes and examines the parameters concerning the \texttt{individual} tasks.
+	
+	\subsection*{Step 1 (Perfect World)}
+	In this step, Amdahl's Law is used to predict the execution time, as shown in Equation~\ref{eq:amdahl_law}.
+	
+	\begin{equation}
+		T(s) = (1- p) \cdot T + \frac{p}{s} \cdot T
+		\label{eq:amdahl_law}
+	\end{equation}
+	
+	where $T$ is total execution time, $p$ is the parallelizable portion and $s$ defines the degree of parallelism.
+	
+	In the current version it implicitly assumes $p = 1$. In the analysis later it can be seen, that this is not too bad for \texttt{individual} tasks, but not accurate for the \texttt{frequency} tasks.
+	
+	This leads to the following execution time predictions (only focuses on \texttt{individual} tasks, since other tasks are stable and not changed from baseline).
+	
+	\begin{table}[h!]
+		\centering
+		\vspace{0.2cm} % Adds a little breathing room between caption and table
+		\begin{tabular}{cc}
+			\toprule
+			\textbf{s} & \textbf{T(s)} \\
+			\midrule
+			2 & 146 \\
+			4 & 73 \\
+			6 & 49 \\
+			8 & 37\\
+			\bottomrule
+		\end{tabular}
+		\caption{Predictions for T(s)}
+		\label{tab:predictions}
+	\end{table}
+	
+	
+	\subsection*{Step 2 (Reality)}
+	Here, the DAG was executed 3 times per configuration to get an average execution time. Since parallel tasks have varying durations, the slowest task was recorded as the stage time. Figure~\ref{fig:dag_structures} illustrates how the DAG structure changes as the parallelism for individual tasks increases. Detailed results can be found in Table~\ref{tab:results1}, which are visualized in Figure~\ref{fig:parallel_analysis}.
+	
+	\begin{figure}[htbp]
+		\centering
+		% --- Row 1 ---
+		% Subfigure 1: 2 Workers (Top Left)
+		\begin{subfigure}[b]{0.48\textwidth}
+			\centering
+			% REPLACE 'example-image-a' with your path, e.g., images/dag_2.png
+			\includegraphics[width=\textwidth]{images/ind2}
+			\caption{Structure for $s=2$ workers.}
+			\label{fig:dag_2}
+		\end{subfigure}
+		\hfill % Pushes the images apart horizontally
+		% Subfigure 2: 4 Workers (Top Right)
+		\begin{subfigure}[b]{0.48\textwidth}
+			\centering
+			% REPLACE with your path
+			\includegraphics[width=\textwidth]{images/ind4}
+			\caption{Structure for $s=4$ workers.}
+			\label{fig:dag_4}
+		\end{subfigure}
+		
+		\vspace{0.5cm} % Adds vertical space between the rows
+		
+		% --- Row 2 ---
+		% Subfigure 3: 6 Workers (Bottom Left)
+		\begin{subfigure}[b]{0.47\textwidth}
+			\centering
+			% REPLACE with your path
+			\includegraphics[width=\textwidth]{images/ind6}
+			\caption{Structure for $s=6$ workers.}
+			\label{fig:dag_6}
+		\end{subfigure}
+		\hfill % Pushes the images apart horizontally
+		% Subfigure 4: 8 Workers (Bottom Right)
+		\begin{subfigure}[b]{0.47\textwidth}
+			\centering
+			% REPLACE with your path
+			\includegraphics[width=\textwidth]{images/ind8}
+			\caption{Structure for $s=8$ workers.}
+			\label{fig:dag_8}
+		\end{subfigure}
+		
+		% --- Main Figure Caption & Label ---
+		\caption{Evolution of the DAG structure when scaling the "individuals" task from 2 to 8 workers.}
+		\label{fig:dag_structures}
+	\end{figure}
+	
+	\begin{table}[h!]
+		\centering
+		\vspace{0.2cm} % Adds a little breathing room between caption and table
+		\begin{tabular}{cccccc}
+			\toprule
+			s & \textbf{$T_{actual}$} & \textbf{$T_{pred}(s)$} & R(s) & Cost & Speedup (task) \\
+			\midrule
+			1 & 292 & - & - & 292 & 1 \\ 
+			2 & 150 & 146 & 4 & 300 & 1.95 \\ 
+			4 & 83 & 73 & 10 & 332 & 3.52 \\ 
+			6 & 65 & 49 & 16 & 390 & 4.49 \\ 
+			8 & 55 & 37 & 18 & 440 & 5.3 \\
+			\bottomrule
+		\end{tabular}
+		\caption{Results of parallel version}
+		\label{tab:results1}
+	\end{table}
+	
+	\begin{figure}[htbp]
+		\centering
+		% --- Top: Performance Metrics (Wide) ---
+		\begin{subfigure}[b]{\textwidth}
+			\centering
+			\includegraphics[width=\textwidth]{plots/parallel_performance_plot.png}
+			\caption{Performance metrics: Execution Time, Speedup, Cost analysis and Overhead}
+			\label{fig:perf_metrics}
+		\end{subfigure}
+		
+		\vspace{0.5cm} % Spacing between rows
+		
+		% --- Bottom: Pareto Frontier (Centered) ---
+		\begin{subfigure}[b]{0.6\textwidth}
+			\centering
+			\includegraphics[width=\textwidth]{plots/pareto_frontier.png}
+			\caption{Pareto Front showing the trade-off between Cost and Time.}
+			\label{fig:pareto}
+		\end{subfigure}
+		
+		\caption{Visual analysis of the parallel execution results.}
+		\label{fig:parallel_analysis}
+	\end{figure}
+	
+	\newpage
+	
+	
+	\section*{Frequency Analysis}
+	This section focuses on tuning and examining the parameters specifically for the \texttt{frequency} tasks.
+	
+	Unlike the previous step, the \texttt{frequency} stage processes multiple distinct populations simultaneously. Experimental observation reveals a disparity in execution times: the task processing the \texttt{ALL} population is computationally more intensive than the other populations, which exhibit shorter and similar runtimes.
+	
+	To optimize resource usage, we classify these tasks into two distinct scaling groups:
+	\begin{itemize}
+		\item \textbf{Class A (Heavy):} The \texttt{ALL} population task. Due to its long duration, this is scaled independently to reduce the critical path.
+		\item \textbf{Class B (Light):} All other populations (e.g., \textit{EUR, AMR, AFR, etc.}). These are grouped and scaled together as their computational footprint is uniform.
+	\end{itemize}
+	
+	Consequently, the following analysis separates the scaling effects for the \texttt{ALL} population from the rest.
+	
+	Since my machine/the cluster don't have enough resources a very simplified version of the DAG is used. It also removed the \texttt{individual}, \texttt{sifting} and \texttt{individuals\_merge}, since they don't have any effect on the execution time of the \texttt{frequency} tasks, see Figure~\ref{fig:base_simp}.
+	
+	Note, this analysis assumes $p$ of $1$, due to simplicity (hard to automatically detect) and additional overhead is caught by the residual $R$.
+	
+	
+	\begin{figure}[h!]
+		\centering
+		\includegraphics[width=0.2\textwidth]{images/base_simple}
+		\caption{DAG structure of simplified version}
+		\label{fig:base_simp}
+	\end{figure}
+	
+	\begin{table}[h!]
+		\centering
+		\begin{tabular}{ccc}
+			\toprule
+			\textbf{Run} & \textbf{Time \texttt{frequency\_ALL} (s)} & \textbf{Time \texttt{frequency\_AFR} (s)} \\
+			\midrule
+			1 & 98 & 52 \\
+			2 & 99 & 54 \\
+			3 & 105 & 60 \\
+			\midrule
+			\textbf{Average} & $\mathbf{101}$ & $\mathbf{55}$ \\
+			\bottomrule
+		\end{tabular}
+		\caption{Results of simplified baseline}
+		\label{tab:base_simple}
+	\end{table}
+
+	
+	
+	\subsection*{Step 1 (Perfect World)}
+	Using Amdahl's Law, we get the following predictions:
+	
+	\begin{table}[h!]
+		\centering
+		\begin{tabular}{ccc}
+			\toprule
+			\textbf{s} & \textbf{$T_{all}(s)$} & \textbf{$T_{afr}(s)$} \\
+			\midrule
+			2 & 50 & 28\\
+			3 & 34 & 18\\
+			4 & 25 & 14\\
+			\bottomrule
+		\end{tabular}
+		\caption{Predictions for T(s)}
+		\label{tab:pred_2}
+	\end{table}
+
+
+	\subsection*{Step 2 (Reality)}
+	Here, the DAG was also executed 3 times per configuration to get an average execution time, Figure~\ref{fig:grid_analysis_9} is showing how the DAG structure changes for different configurations.
+	
+	Note that \texttt{frequency\_AFR} is representing all other populations, and time is sum of duration for all \texttt{frequency} tasks.
+	
+	\begin{table}[h!]
+		\centering
+		
+		% Reduce column padding slightly to fit everything
+		\setlength{\tabcolsep}{10pt} 
+		\small % Slightly smaller font to ensure fit
+		
+		\begin{tabular}{cccccccccc}
+			\toprule
+			\multicolumn{2}{c}{\textbf{Workers}} & \multicolumn{3}{c}{\textbf{ALL Task}} & \multicolumn{3}{c}{\textbf{AFR Task}} & \multicolumn{2}{c}{\textbf{Global}} \\
+			\cmidrule(lr){1-2} \cmidrule(lr){3-5} \cmidrule(lr){6-8} \cmidrule(lr){9-10}
+			
+			$s_{all}$ & $s_{afr}$ & 
+			$T$ & $T_{pred}$ & $R$ & 
+			$T$ & $T_{pred}$ & $R$ & 
+			Cost & Speedup \\
+			\midrule
+			
+			1 & 1 & \textbf{101} & - & - & 55 & - & - & 156 & 1.00 \\
+			2 & 1 & \textbf{72} & 50 & 22 & 64 & 55 & 9 & 201 & 1.4 \\
+			2 & 2 & \textbf{76} & 50 & 26 & 57 & 28 & 29 & 251 & 1.33 \\
+			3 & 1 & 60 & 34 & 26 & \textbf{66} & 55 & 11 & 232 & 1.53 \\
+			3 & 2 & \textbf{65} & 34 & 31 & 60 & 28 & 32 & 294 & 1.55 \\
+			3 & 3 & \textbf{67} & 34 & 33 & 50 & 14 & 36 & 324 & 1.51 \\
+			4 & 1 & 54 & 25 & 29 & \textbf{69} & 55 & 14 & 265 & 1.46 \\
+			4 & 2 & 46 & 25 & 21 & \textbf{50} & 28 & 22 & 258 & 2.02 \\
+			4 & 3 & \textbf{50} & 25 & 25 & 42 & 18 & 24 & 277 & 2.02 \\
+			4 & 4 & \textbf{48} & 25 & 23 & 37 & 14 & 23 & 297 & 2.1 \\
+			\bottomrule
+		\end{tabular}
+		
+		\caption{Detailed performance metrics for Frequency tasks. $R$ denotes the Residual.}
+		\label{tab:results2}
+	\end{table}
+	
+	Note the correlation between \texttt{frequency\_ALL} and \texttt{frequency\_AFR}, in the second row, only ALL is scaled, and AFR is using only one pod, so it could be expected that the time of \texttt{freuqency\_AFR} stays the same, but due to resource contention (inference), it gets higher, so it takes special care when dealing with concurrent tasks that are scaled independently.
+	
+	The results are also visualized in Figure~\ref{fig:parallel_analysis2}.
+	
+	
+	\begin{figure}[htbp]
+		\centering
+		
+		% --- Row 1 ---
+		\begin{subfigure}[b]{0.28\textwidth}
+			\centering
+			\includegraphics[width=\textwidth]{images/21}
+			\caption{$s_{all} = 2$; $s_{afr} = 1$}
+			\label{fig:img21}
+		\end{subfigure}
+		\hfill
+		\begin{subfigure}[b]{0.28\textwidth}
+			\centering
+			\includegraphics[width=\textwidth]{images/22}
+			\caption{$s_{all} = 2$; $s_{afr} = 2$}
+			\label{fig:img22}
+		\end{subfigure}
+		\hfill
+		\begin{subfigure}[b]{0.28\textwidth}
+			\centering
+			\includegraphics[width=\textwidth]{images/31}
+			\caption{$s_{all} = 3$; $s_{afr} = 1$}
+			\label{fig:img31}
+		\end{subfigure}
+		
+		\vspace{0.3cm} % Vertical spacing between Row 1 and Row 2
+		
+		% --- Row 2 ---
+		\begin{subfigure}[b]{0.28\textwidth}
+			\centering
+			\includegraphics[width=\textwidth]{images/32}
+			\caption{$s_{all} = 3$; $s_{afr} = 2$}
+			\label{fig:img32}
+		\end{subfigure}
+		\hfill
+		\begin{subfigure}[b]{0.28\textwidth}
+			\centering
+			\includegraphics[width=\textwidth]{images/33}
+			\caption{$s_{all} = 3$; $s_{afr} = 3$}
+			\label{fig:img33}
+		\end{subfigure}
+		\hfill
+		\begin{subfigure}[b]{0.28\textwidth}
+			\centering
+			\includegraphics[width=\textwidth]{images/41}
+			\caption{$s_{all} = 4$; $s_{afr} = 1$}
+			\label{fig:img41}
+		\end{subfigure}
+		
+		\vspace{0.3cm} % Vertical spacing between Row 2 and Row 3
+		
+		% --- Row 3 ---
+		\begin{subfigure}[b]{0.28\textwidth}
+			\centering
+			\includegraphics[width=\textwidth]{images/42}
+			\caption{$s_{all} = 4$; $s_{afr} = 2$}
+			\label{fig:img42}
+		\end{subfigure}
+		\hfill
+		\begin{subfigure}[b]{0.28\textwidth}
+			\centering
+			\includegraphics[width=\textwidth]{images/43}
+			\caption{$s_{all} = 4$; $s_{afr} = 3$}
+			\label{fig:img43}
+		\end{subfigure}
+		\hfill
+		\begin{subfigure}[b]{0.28\textwidth}
+			\centering
+			\includegraphics[width=\textwidth]{images/44}
+			\caption{$s_{all} = 4$; $s_{afr} = 4$}
+			\label{fig:img44}
+		\end{subfigure}
+		
+		\caption{DAG structures of different configurations.}
+		\label{fig:grid_analysis_9}
+	\end{figure}
+	
+	
+	\begin{figure}[htbp]
+		\centering
+		% --- Top: Performance Metrics (Wide) ---
+		\begin{subfigure}[b]{\textwidth}
+			\centering
+			\includegraphics[width=\textwidth]{plots/task_performance_analysis.png}
+			\caption{Performance metrics: Execution Time, Speedup, Cost analysis and Overhead}
+			\label{fig:perf_metrics2}
+		\end{subfigure}
+		
+		\vspace{0.5cm} % Spacing between rows
+		
+		% --- Bottom: Pareto Frontier (Centered) ---
+		\begin{subfigure}[b]{0.8\textwidth}
+			\centering
+			\includegraphics[width=\textwidth]{plots/pareto_frontier_tasks.png}
+			\caption{Pareto Front showing the trade-off between Cost and Time.}
+			\label{fig:pareto2}
+		\end{subfigure}
+		
+		\caption{Visual analysis of the parallel execution results.}
+		\label{fig:parallel_analysis2}
+	\end{figure}
+	
+	
+	\newpage
+	
+	\subsection*{Optimized Approach for $p$}
+	
+	To improve the accuracy of the residual ($R$) the parameter $p$ can be observed through execution times and not blindly set to $p=1$.
+	
+	\begin{align*}
+		T(s) &= (1 - p) \cdot T(1) + \frac{p}{s} \cdot T(1) \\[7pt]
+		\frac{T(s)}{T(1)} &= (1-p) + \frac{p}{s} \\[7pt]
+		\frac{T(s)}{T(1)} -1 &= -p + \frac{p}{s} \\[7pt]
+		\frac{T(s)}{T(1)} -1 &= \frac{p}{s} -p \\[7pt]
+		\frac{T(s) - T(1)}{T(1)} &= p \cdot \left(\frac{1}{s} - 1\right) \\[7pt]
+		\frac{T(s) - T(1)}{T(1)} &= p \cdot \left(\frac{1-s}{s}\right) \\[7pt]
+		\frac{\frac{T(s) - T(1)}{T(1)}}{\frac{1-s}{s}} &= p \\[7pt]
+		\frac{T(s) - T(1)}{T(1)} \cdot \frac{s}{1-s} &= p \\[7pt]
+		\left(\frac{T(s)}{T(1)} - \frac{T(1)}{T(1)}\right) \cdot \frac{s}{1-s} &= p \\[7pt]
+		\left(\frac{T(s)}{T(1)} - 1\right) \cdot \frac{s}{1-s} &= p \\[7pt]
+		\left(1 - \frac{T(s)}{T(1)}\right) \cdot \frac{s}{s-1} &= p \\[7pt]
+		\frac{\left(1 - \frac{T(s)}{T(1)}\right) \cdot s}{s - 1} &= p
+	\end{align*}
+	
+	resulting in
+	
+	\[
+	p_{obs} = \frac{s \cdot \left(1 - \frac{T(s)}{T(1)}\right)}{s-1} = \frac{s}{s-1} \cdot \left(1 - \frac{T(s)}{T(1)}\right)
+	\]
+	
+	
+	This requires the baseline time, and a parallel execution from which $p$ can be inferred. 
+	
+	To test this approach, the results of Table~\ref{tab:results1} and Table~\ref{tab:results2} are used and compared to check if it performs better or not.
+	
+	\subsubsection*{Individual Comparison}
+	
+	It uses the same baseline and one execution with $s = 4$ $\rightarrow$ $T(4) = 82$, to infer $P_{obs}$ and then the table is filled, which results in $P_{obs} = 0.96$.
+	
+	As visible in Table~\ref{tab:results_comparison1} and Figure~\ref{fig:model_comparison1} the "fitted" model predicts the residual better.
+	
+	
+	\begin{table}[h!]
+		\centering
+		\vspace{0.2cm} % Adds a little breathing room between caption and table
+		\begin{tabular}{cc}
+			\toprule
+			\textbf{s} & \textbf{T(s)} \\
+			\midrule
+			2 & 152 \\
+			4 & 82 \\
+			6 & 58 \\
+			8 & 47\\
+			\bottomrule
+		\end{tabular}
+		\caption{Predictions for T(s) with $p_{obs}$}
+		\label{tab:predictions1}
+	\end{table}
+	
+	\begin{table}[h!]
+		\centering
+		\renewcommand{\arraystretch}{1.2} % Adds vertical breathing room
+		\setlength{\tabcolsep}{6pt}       % Adjust horizontal padding
+		
+		\begin{tabular}{cccccc}
+			\toprule
+			& & \multicolumn{2}{c}{\textbf{Naive Model} ($p=1$)} & \multicolumn{2}{c}{\textbf{Fitted Model} ($p \approx 0.96$)} \\
+			\cmidrule(lr){3-4} \cmidrule(lr){5-6}
+			
+			\textbf{s} & \textbf{$T_{actual}$} & 
+			$T_{pred}$ & $R$ & 
+			$T_{pred}$ & $R$ \\
+			\midrule
+			
+			1 & 292 & - & -  & - & - \\ 
+			2 & 150 & 146 & 4 & 152 & -2 \\ 
+			4 & 83  & 73  & 10 & 82  & 1 \\ 
+			6 & 65  & 49  & 16 & 58  & 7 \\ 
+			8 & 55  & 37  & 18 & 47  & 8 \\
+			
+			\bottomrule
+		\end{tabular}
+		
+		\caption{Comparison of Naive ($p=1$) vs. Fitted ($p_{obs}$) prediction models. Note that the Fitted model reduces the unexplained Residual ($R$), isolating the true cluster overhead.}
+		\label{tab:results_comparison1}
+	\end{table}
+	
+	\begin{figure}[h!]
+		\centering
+		\includegraphics[width=\textwidth]{plots/comparison_plots1.png}
+		\caption{Differences between naive and fitted residual predictions}
+		\label{fig:model_comparison1}
+	\end{figure}
+	
+	
+	
+	\subsubsection*{Frequency Comparison}
+	It also uses the same baseline and one execution and an execution with $s=4$, since ALL and AFR are scaled differently it uses two different $p$ values. This results in: $p_{obs}^{all} = 0.61$ and $p_{obs}^{afr} = 0.58$. These values were taken from executions where one task had s=4 and the other s=1.
+	
+	\begin{table}[h!]
+		\centering
+		\begin{tabular}{ccc}
+			\toprule
+			\textbf{s} & \textbf{$T_{all}(s)$} & \textbf{$T_{afr}(s)$} \\
+			\midrule
+			2 & 70 & 39 \\
+			3 & 60 & 34 \\
+			4 & 55 & 31 \\
+			\bottomrule
+		\end{tabular}
+		\caption{Predictions for T(s) with $p_{obs}^{all}$ and $p_{obs}^{afr}$}
+		\label{tab:pred_3}
+	\end{table}
+	
+	\begin{table}[h!]
+		\centering
+		\renewcommand{\arraystretch}{1.2}
+		\setlength{\tabcolsep}{3pt}
+		\footnotesize
+		
+		% Preamble defines borders: cc|c|cc|cc||c|cc|cc
+		\begin{tabular}{cc||c|cc|cc||c|cc|cc}
+			\toprule
+			% FIXED: Added '|' after Workers
+			\multicolumn{2}{c||}{\textbf{Workers}} & 
+			% FIXED: Added '||' after ALL Task
+			\multicolumn{5}{c||}{\textbf{ALL Task}} & 
+			\multicolumn{5}{c}{\textbf{AFR Task}} \\
+			
+			\cmidrule(lr){1-2} \cmidrule(lr){3-7} \cmidrule(lr){8-12} 
+			
+			& & & 
+			\multicolumn{2}{c|}{\textbf{Naive}} & 
+			\multicolumn{2}{c||}{\textbf{Fitted} ($p\approx0.61$)} & & 
+			\multicolumn{2}{c|}{\textbf{Naive}} & 
+			\multicolumn{2}{c}{\textbf{Fitted} ($p\approx0.58$)} \\
+			
+			$s_{all}$ & $s_{afr}$ & 
+			$T_{act}$ & $T_{pred}$ & $R$ & $T_{pred}$ & $R$ & 
+			$T_{act}$ & $T_{pred}$ & $R$ & $T_{pred}$ & $R$ \\
+			\midrule
+			
+			1 & 1 & \textbf{101} & - & - & - & - & 55 & - & - & - & - \\
+			2 & 1 & \textbf{72} & 50 & 22 & 70 & 2 & 64 & 55 & 9 & 55 & 9 \\
+			2 & 2 & \textbf{76} & 50 & 26 & 70 & 6 & 57 & 28 & 29 & 39 & 18 \\
+			3 & 1 & 60 & 34 & 26 & 60 & 0 & \textbf{66} & 55 & 11 & 55 & 11 \\ 
+			3 & 2 & \textbf{65} & 34 & 31 & 60 & 5 & 60 & 28 & 32 & 39 & 21 \\
+			3 & 3 & \textbf{67} & 34 & 33 & 60 & 7 & 50 & 14 & 36 & 34 & 16 \\
+			4 & 1 & 54 & 25 & 29 & 55 & -1 & \textbf{69} & 55 & 14 & 55 & 14 \\
+			4 & 2 & 46 & 25 & 21 & 55 & -9 & \textbf{50} & 28 & 22 & 39 & 11 \\
+			4 & 3 & \textbf{50} & 25 & 25 & 55 & -5 & 42 & 18 & 24 & 34 & 8 \\
+			4 & 4 & \textbf{48} & 25 & 23 & 55 & -7 & 37 & 14 & 23 & 31 & 6 \\
+			\bottomrule
+		\end{tabular}
+			\caption{Comparison of Naive ($p=1$) vs. Fitted ($p_{obs}$) prediction models. The fitted model significantly reduces residuals for the primary ALL task. For the AFR task, persistent residuals in rows where $s_{all} > s_{afr}$ quantify the cross-task interference (Noisy Neighbor effect) caused by resource contention.}
+		\label{tab:freq_results_comparison}
+	\end{table}
+
+
+	\begin{figure}[h!]
+		\centering
+		% --- Top: Performance Metrics (Wide) ---
+		\begin{subfigure}[b]{\textwidth}
+			\centering
+			\includegraphics[width=\textwidth]{plots/all_task_plots.png}
+			\caption{Comparison of \texttt{frequency\_ALL}}
+			\label{fig:all_tasks}
+		\end{subfigure}
+		
+		\vspace{0.5cm} % Spacing between rows
+		
+		% --- Bottom: Pareto Frontier (Centered) ---
+		\begin{subfigure}[b]{\textwidth}
+			\centering
+			\includegraphics[width=\textwidth]{plots/afr_task_plots.png}
+			\caption{Comparison of \texttt{frequency\_AFR}}
+			\label{fig:afr_tasks}
+		\end{subfigure}
+		
+		\caption{Comparison of Residual for naive and fitted model}
+		\label{fig:freq_plots2}
+	\end{figure}
+	
+	
+	\newpage
+	
+	
+	\subsection*{Open Questions \& Possible Improvements}
+	
+	\subsubsection*{Dynamic Estimation of $p_{obs}$}
+	The observed parallelizable portion ($p_{obs}$) is currently estimated after the first parallel execution (may be biased by current cluster state). To improve robustness, $p_{obs}$ could be treated as a dynamic variable, updated after each execution $k$ with "Online Empirical Average with Learning Rate":
+	
+	\[
+	p_{obs}^{(k+1)} = \alpha \cdot p_{obs}^{(k)} + (1-\alpha) \cdot p_{current} \quad \left(\alpha \in \mathbb{R}: 0 < \alpha \leqslant 1 \right)
+	\] 
+	
+	where $\alpha$ is the learning rate.
+	
+	
+	\subsubsection*{Input Size}
+	Since the execution time of workflows highly depends on the input size, the model needs to be aware of it. Using absolute units (e.g. "seconds per MB of data") is very problematic (e.g. number of genome chunks vs. number of images (IISAS)).
+	
+	The following is based on the assumption that the execution time scales proportionally with the input size ($T \propto N$).
+	
+	This uses a relative scaling factor $\gamma$. If baseline had input size $N_{base}$ and current run had input size $N_{curr}$ it has a scaling factor:
+	
+	\[
+	\gamma = \frac{N_{curr}}{N_{base}}
+	\]
+	
+	The input size could be measured from download size? or user input
+	
+	The time is presumed to scale linearly with $\gamma$:
+	
+	\begin{align*}
+		T_{Amdahl}(s, \gamma) &= \underbrace{C_{startup}}_{\text{Fixed Overhead}} + \gamma \cdot \left((1 - p_{obs}) \cdot T(1)\right) + \gamma \cdot \left(\frac{p_{obs}}{s} \cdot T(1)\right) \\[9pt]
+		P(s, \gamma) &= T_{Amdahl}(s, \gamma) + R(s, \gamma)
+	\end{align*}
+	
+	This relies on knowing the constant overhead pod start-up time.
+	
+	
+	
+	\subsubsection*{Resource Contention}
+	A workflow is influenced by the total load of the cluster (see Table~\ref{tab:results2}), the model needs to account for this interference. Optimizing a workflow in isolation might lead to performance degradation caused by other concurrent workflows.
+	
+	It requires an additional variable measuring the cluster load, which aggregates the parallelism of all other active tasks:
+	
+	\[
+	L_{cluster} = \sum_{i \neq j}^{} s_{task}^i
+	\]
+	
+	The residual function $R$ needs to be expanded, such that GP learn correlation between high cluster pressure and increased execution time:
+	
+	\[
+	P(s, L_{cluster}) = T_{Amdahl}(s) + R(s, L_{cluster})
+	\]
+	
+	A questions still remains, when to calculate the cluster load, for it to be most accurate it needs to be right before scaling a task.
+	
+	
+	\subsubsection*{Unified Residual Model}
+	To capture the interplay between infrastructure, input size and cluster pressure, it can be combined into a single multi-dimensional Gaussian Process, which is defined as:
+	
+	\[
+	P(s, \gamma, L_{cluster}) = T_{Amdahl}(s, \gamma) + R(\mathbf{x})
+	\]
+	
+	where:
+	\begin{itemize}
+		\item $T_{Amdahl}$ is theoretical time accounting for input size:
+		\[
+		T_{Amdahl}(s, \gamma) = \underbrace{C_{startup}}_{\text{Fixed Overhead}} + \gamma \cdot \left((1 - p_{obs}) \cdot T(1)\right) + \gamma \cdot \left(\frac{p_{obs}}{s} \cdot T(1)\right)
+		\]
+		\item $R(\mathbf{x})$ is the learned residual, where $\mathbf{x}$ is defined as:
+		\[
+		\mathbf{x} = \left[s, \gamma, L_{cluster}\right]
+		\]
+		
+	\end{itemize}
+	
+	\subsection*{Proposed Algorithm}
+	
+	Based on the analysis and derivations above, the algorithm is shown (might still change). The algorithm works on a Task-Specific Basis, since specific tasks in the DAG exhibit unique computational characteristics.	 It consists of two Phases:
+	
+	\subsubsection*{Phase 1: Initialization}
+	Before optimizations are possible, the system needs a baseline for the workflow structure.
+	
+	\begin{enumerate}
+		\item \textbf{Measure Baseline ($s=1$):} Execute workflow sequentially, record execution time $T_{base}(1)$, the reference input size $N_{base}$ and the cluster load during execution $L_{cluster}$
+		
+		\item \textbf{Measure Overhead ($C_{startup}$):} 
+		Estimate fixed infrastructure overhead (e.g., Pod spin-up time). This is treated as a constant.
+		
+		\item \textbf{Initial Parallel Execution:} 
+		Execute the workflow once with a moderate parallelism (e.g., $s=4$). Record the observed time $T_{obs}$ and the cluster load $L_{probe}$.
+		
+		\item \textbf{Derive Initial $p_{obs}$:} 
+		Calculate the initial parallelizable fraction using the inverse Amdahl function:
+		\[
+		p_{obs}^{(0)} = \frac{s}{s-1} \cdot \left(1 - \frac{T_{obs} - C_{startup}}{T_{base}(1)}\right)
+		\]
+		\item \textbf{Initialize GP:} 
+		Initialize the Gaussian Process with the data point from the probe execution. The initial training pair $(\mathbf{x}, y)$ is:
+		\[
+		\mathbf{x} = [s=4, \gamma=1, L_{probe}], \quad y = T_{obs} - T_{Amdahl}(4, 1)
+		\]
+	\end{enumerate}
+	
+	\subsubsection*{Phase 2: Optimization Loop}
+	For every new ($k$) requested execution the following steps are performed:
+	
+	\begin{enumerate}
+		\item \textbf{Model Retrieval:} Retrieve the specific parameters ($p_{obs}$, $N_{base}$, ...) and the (trained) GP from a registry (e.g. database, or similar)
+		
+		\item \textbf{Context Gathering:} 
+		\begin{itemize}
+			\item Measure current Input Size ($N_{curr}$) and calculate scaling factor $\gamma = N_{curr} / N_{base}$
+			\item snapshot current Cluster Load $L_{cluster} = \sum_{i \neq j} s_{task}^i$
+		\end{itemize}
+		An open question which remains is, how to handle the case where the first task can already be parallelized, possible strategies:
+		\begin{itemize}
+			\item Insert dummy task, that downloads the same data $\to$ not useful if input data is very big
+			\item rely on user input
+			\item force specific values (e.g. $\gamma$ = 1)
+		\end{itemize}
+		
+		\item \textbf{Prediction:} For a given candidate range $s \in [1, S_{max}]$ calculate the predicted execution time:
+		
+		\[
+		P(s, \gamma, L_{cluster}) = \underbrace{C_{startup} + \gamma \cdot \left((1 - p_{obs}) \cdot T_{base}(1)\right) + \gamma \cdot \left(\frac{p_{obs}}{s} \cdot T_{base}(1)\right)}_{T_{Amdahl(s, \gamma)}} + \underbrace{GP(s, \gamma, L_{cluster})}_{R(\mathbf{x})}
+		\]
+		\item \textbf{Decision:} Select optimal $S_{opt}$ that minimizes the Score function (balancing Cost vs. Speed):
+		\[
+		s_{opt} = \underset{s}{\mathrm{argmin}} \left( P(s, \gamma, L_{cluster})^a \cdot \text{Cost}(s) \right) \qquad \text{original formula used Cost(p), check!}
+		\]
+		where $a$ is the urgency factor ($a$ = $0.5$ $\to$ save money; $a$ = $1$ $\to$ balance; $a$ = $2$ $\to$ save time)
+		\item \textbf{Execution \& Feedback:} Execute task with $s_{opt}$ and measure actual execution time $T_{actual}$
+		\item \textbf{Model Update:} 
+		\begin{itemize}
+			\item \textbf{Calculate $p_{current}$:}
+			Derive the parallelizable fraction from the observed time, accounting for input scaling ($\gamma$) and fixed overhead ($C_{startup}$):
+			\[
+			p_{current} = \frac{s}{s-1} \cdot \left(1 - \frac{T_{actual} - C_{startup}}{\gamma \cdot T_{base}(1)}\right)
+			\]
+			\item \textbf{Update $p_{obs}$:}
+			\[
+			p_{obs}^{k} = \alpha \cdot p_{obs}^{k-1} + (1 - \alpha) \cdot p_{current}
+			\]
+			\item \textbf{Update GP:} Add new observation:
+			\[
+			\mathbf{x} = \left[s_{opt}, \gamma, L_{cluster}\right], y = T_{actual} - T_{Amdahl}(s_{opt}, \gamma)
+			\]
+			to the Gaussian Process training
+		\end{itemize}
+	\end{enumerate}
+	
+	% \subsubsection*{Implementation Architecture}
+	
+	% horizontal scaling inside DAG vertical scaling as custom Operator
+	
+	
+	
+	
+\end{document}
