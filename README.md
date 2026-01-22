@@ -111,4 +111,4 @@ KubernetesPodOperator.partial(
 
 Adds an additional start-up cost for pods, but safer for scheduler and scales better in the cluster
 
-Requires restructuring the existing DAGs (should be feasible)
+Requires restructuring the existing DAGs (should be feasible), check in detail how .expand() works (task_id and map indexes)
