@@ -117,3 +117,14 @@ KubernetesPodOperator.partial(
 Adds an additional start-up cost for pods, but safer for scheduler and scales better in the cluster
 
 Requires restructuring the existing DAGs (should be feasible), check in detail how .expand() works (task_id and map indexes)
+
+## Way to integrate SLOs
+### Execution time
+- let user define max time it can take
+- in the optimization loop discard all the configurations where time is too high
+- then use cheapest one/ or other metric
+
+### Cost
+- calculate cost based on s * predicted duration * cost per second (for example)
+- get predictions and cut of all that are too high
+- then pick fastest one
