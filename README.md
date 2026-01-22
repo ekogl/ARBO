@@ -6,6 +6,10 @@ It requires 3 main components:
 2. Estimator (Python): logic containing Amdahl's Law and GP (proposed algorithm)
 3. Interceptor: A hook in DAG to query Estimator before usage and update metrics afterwards
 
+## Open Questions / Things to keep in Mind
+- introduce a learning rate for P_obs
+- check input  linearity assumptions and maybe change gamma
+- cluster load definition might be too naive, should be good for basic version
 
 ## Data Model (Step 1)
 ```sql
@@ -39,7 +43,8 @@ implement model, dynamic update loop, optimization loop, integration to cluster 
 ## Interceptor (Step 3):
 figure out a smart way to integrate model into DAG
 
-maybe use sth like:
+### Option A: (At parse time)
+maybe use sth like (would run on the scheduler -> bad for performance):
 ```python
 default_args = {
     "owner": 'user',
@@ -67,7 +72,7 @@ FREQUENCY_EUR_WORKERS = optimizer.get_optimal_parallelism("frequency_EUR", defau
 since Arbo is initialized in top-level code, this will run every time DAG gets parsed, might need to implement some sort of caching to avoid constant DB queries which would kill the scheduler
 
 ### Option B: (JIT with Dynamic Task Mapping)
-This runs optimization as a standalone task immediately before the heavy workload. This is safer for the scheduler and provides fresher metrics (e.g., accurate Cluster Load at execution time).
+This runs optimization as a standalone task immediately before the heavy workload (on the worker; scheduler is safe; no pod-spin-up time). This is safer for the scheduler and provides fresher metrics (e.g., accurate Cluster Load at execution time).
 
 It uses `Airflow's Dynamic Task Mapping` (.expand) instead of Python `for` loops.
 
