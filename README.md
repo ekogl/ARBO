@@ -10,6 +10,7 @@ It requires 3 main components:
 - introduce a learning rate for P_obs
 - check input  linearity assumptions and maybe change gamma
 - cluster load definition might be too naive, should be good for basic version
+- include some mechanism to keep the datapoints small/fresh (handle concept drift, is faster (slicing window))
 
 ## Data Model (Step 1)
 ```sql

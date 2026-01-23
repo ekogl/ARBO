@@ -773,6 +773,56 @@
 		\end{itemize}
 	\end{enumerate}
 	
+	\subsubsection*{Model Maintenance: Rolling Window Strategy}
+	To maintain low computational overhead and ensure adaptability to "Concept Drift" (e.g., permanent shifts in cluster performance, hardware upgrades, or changes in baseline load), the Gaussian Process is restricted to a fixed-size history buffer $W$ (e.g., $W=500$). 
+	
+	Instead of training on the potentially infinite set of all historical executions $\mathcal{H}_{all}$, the model uses a localized training set $\mathcal{H}_{active}$ containing only the $W$ most recent observations:
+	
+	\begin{equation}
+		\mathcal{H}_{active}^{(k)} = \{ (\mathbf{x}_i, y_i) \mid i \in [\max(0, k-W), k] \}
+	\end{equation}
+	
+	This ensures that the inference complexity remains constant at $\mathcal{O}(W^3)$ rather than growing cubically with total usage time ($\mathcal{O}(k^3)$), while automatically discarding obsolete infrastructure data that may no longer reflect the current system state.
+	
+	\subsubsection*{Refined Algorithm}
+	The optimization loop works on a Task-Specific Basis. For every new execution request $k$:
+	
+	\begin{enumerate}
+		\item \textbf{Context Gathering:} 
+		Measure the current input size $N_{curr}$ to derive the scaling factor $\gamma = N_{curr} / N_{base}$, and snapshot the current cluster load $L_{cluster}$.
+		
+		\item \textbf{Probabilistic Prediction:} 
+		Using the GP trained on the active history $\mathcal{H}_{active}^{(k-1)}$, predict the residual statistics for a candidate parallelism $s$:
+		\[
+		\mu_{res}, \sigma_{res}^2 = GP(s, \gamma, L_{cluster} \mid \mathcal{H}_{active}^{(k-1)})
+		\]
+		The total predicted execution time is modeled as a distribution:
+		\[
+		P(s) \sim \mathcal{N}\left(T_{Amdahl}(s, \gamma) + \mu_{res}, \sigma_{res}^2\right)
+		\]
+		
+		\item \textbf{Acquisition \& Decision:}
+		Select the optimal parallelism $s_{opt}$ that minimizes the objective function. To account for uncertainty, we minimize the \textit{Expected Cost} rather than a point estimate:
+		\[
+		s_{opt} = \underset{s}{\mathrm{argmin}} \left( \mathbb{E}[P(s)]^a \cdot \text{Cost}(s) \right)
+		\]
+		\textit{(Note: More advanced Acquisition Functions like Expected Improvement (EI) can be substituted here if exploration is desired.)}
+		
+		\item \textbf{Execution:} 
+		Execute the task with $s_{opt}$ and measure the actual execution time $T_{actual}$.
+		
+		\item \textbf{Rolling Update:}
+		\begin{itemize}
+			\item \textbf{Compute Residual:} Calculate the discrepancy between theory and reality:
+			\[ y_{new} = T_{actual} - T_{Amdahl}(s_{opt}, \gamma) \]
+			\item \textbf{Construct Data Point:} Form the feature vector $\mathbf{x}_{new} = [s_{opt}, \gamma, L_{cluster}]$.
+			\item \textbf{Update History:} Append the new observation to the buffer:
+			\[ \mathcal{H}_{active}^{(k)} \leftarrow \mathcal{H}_{active}^{(k-1)} \cup \{ (\mathbf{x}_{new}, y_{new}) \} \]
+			\item \textbf{Pruning:} If the buffer size $|\mathcal{H}_{active}^{(k)}| > W$, remove the oldest data point $(\mathbf{x}_{k-W}, y_{k-W})$ to maintain the window size.
+			\item \textbf{Retrain:} Re-optimize the Gaussian Process hyperparameters (length-scales and noise variance) using the updated $\mathcal{H}_{active}^{(k)}$.
+		\end{itemize}
+	\end{enumerate}
+	
 	% \subsubsection*{Implementation Architecture}
 	
 	% horizontal scaling inside DAG vertical scaling as custom Operator
