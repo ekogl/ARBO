@@ -1,0 +1,1 @@
+# TODO: implement logic of communication with DB
