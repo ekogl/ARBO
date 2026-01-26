@@ -15,5 +15,6 @@ CREATE TABLE execution_history (
     input_scale_factor FLOAT,  -- gamma
     cluster_load INT,          -- L_cluster
     execution_time FLOAT,      -- Actual T
+    timestamp TIMESTAMP,       -- Timestamp of execution begin
     residual FLOAT,            -- T_actual - T_amdahl
     FOREIGN KEY (task_name) REFERENCES task_models(task_name)
