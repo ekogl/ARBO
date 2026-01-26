@@ -20,22 +20,38 @@ CREATE TABLE task_models (
     p_obs FLOAT,               -- Current dynamic parallelizable portion
     c_startup FLOAT,           -- Fixed overhead (e.g., pod spin-up)
     alpha FLOAT DEFAULT 0.3,   -- Learning rate for p_obs
-    last_updated TIMESTAMP
-    -- maybe add sample count?
-    sample_count INT DEFAULT 0
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    sample_count INT DEFAULT 1
 );
 
 CREATE TABLE execution_history (
     id SERIAL PRIMARY KEY,
-    task_name VARCHAR(255),
-    parallelism INT,           -- s
-    input_scale_factor FLOAT,  -- gamma
-    cluster_load INT,          -- L_cluster
-    execution_time FLOAT,      -- Actual T
-    residual FLOAT,            -- T_actual - T_amdahl
-    FOREIGN KEY (task_name) REFERENCES task_models(task_name)
+    task_name VARCHAR(255) REFERENCES task_models(task_name),
+    parallelism INT NOT NULL ,           -- s
+    input_scale_factor FLOAT NOT NULL,  -- gamma
+    cluster_load INT NOT NULL,          -- L_cluster
+    total_duration FLOAT NOT NULL,      -- Actual T (Wall Clock Time)
+    residual FLOAT NOT NULL,            -- T_actual - T_amdahl
+    cost_metric FLOAT,                 -- Cost of run
+    recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Index for faster lookups by task name
+CREATE INDEX idx_history_task ON execution_history(task_name);
 ```
+
+the tables can be dropped via:
+```sql
+DROP TABLE IF EXISTS execution_history;
+DROP TABLE IF EXISTS task_models CASCADE;
+```
+
+### Testing Strategy
+To ensure reliabilty and no loss of data in the main database (`arbo_state`), the project uses an additional database, strictly for testing
+
+1. The test database (`arbo_test`). For the test to run properly, this database needs to exist and have exactly the same schema as the main database (`arbo_state`)
+2. The testing framework (`pytest`) is configured to run against the test database (`arbo_test`)
+3. Run the tests locally with `pytest -v` or `pytest tests/db/test_arbo.py` to only run the storage tests
 
 ## Estimator (Step 2):
 implement model, dynamic update loop, optimization loop, integration to cluster to fetch metrics ...

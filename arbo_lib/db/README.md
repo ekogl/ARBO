@@ -12,4 +12,6 @@ docker run --name arbo-db \
 ```
 **Note**: might need to change port mapping
 
-Then connect in pgAdmin4
+It is also possible to connect pgAdmin4 to this database for easier access
+
+# TODO maybe explain structure of code here

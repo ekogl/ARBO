@@ -687,9 +687,10 @@
 	where:
 	\begin{itemize}
 		\item $T_{Amdahl}$ is theoretical time accounting for input size:
-		\[
-		T_{Amdahl}(s, \gamma) = \underbrace{C_{startup}}_{\text{Fixed Overhead}} + \gamma \cdot \left((1 - p_{obs}) \cdot T(1)\right) + \gamma \cdot \left(\frac{p_{obs}}{s} \cdot T(1)\right)
-		\]
+		\begin{align*}
+			T_{Amdahl}(s, \gamma) &= \underbrace{C_{startup}}_{\text{Fixed Overhead}} + \gamma \cdot \left((1 - p_{obs}) \cdot T(1)\right) + \gamma \cdot \left(\frac{p_{obs}}{s} \cdot T(1)\right) \\[7pt]
+			 &= \underbrace{C_{startup}}_{\text{Fixed Overhead}} + \gamma \cdot \left[ (1 - p_{obs}) \cdot T(1) + \frac{p_{obs}}{s} \cdot T(1) \right]
+		\end{align*}
 		\item $R(\mathbf{x})$ is the learned residual, where $\mathbf{x}$ is defined as:
 		\[
 		\mathbf{x} = \left[s, \gamma, L_{cluster}\right]
