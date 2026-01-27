@@ -1,5 +1,8 @@
 from typing import List, Dict, Any
 from arbo_lib.core.estimator import ArboEstimator
+from arbo_lib.utils.logger import get_logger
+
+logger = get_logger("arbo.optimizer")
 
 class ArboOptimizer:
     """
@@ -8,6 +11,7 @@ class ArboOptimizer:
     def __init__(self):
         self.estimator = ArboEstimator()
 
+    # TODO: handle cluster load properly
     def get_task_configs(self, task_name: str, gamma: float, cluster_load: float = 0.0, max_time_slo: float = None) -> List[Dict]:
         """
         Gets optimal value for 's' from estimator
@@ -20,7 +24,7 @@ class ArboOptimizer:
         """
         s_opt = self.estimator.predict(task_name=task_name, gamma=gamma, cluster_load=cluster_load, max_time_slo=max_time_slo)
 
-        print(f"[{task_name}] Arbo Optimizer chose s={s_opt} (Gamma={gamma}, Load={cluster_load})")
+        logger.info(f"Request received for '{task_name}': Gamma={gamma}, Load={cluster_load}")
 
         # create config list for dynamic task mapping
         configs = []
@@ -44,6 +48,9 @@ class ArboOptimizer:
         :param cluster_load:
         :return:
         """
-        print(f"[{task_name}] Reporting Feedback to Arbo: s={s}, Time={total_duration:.2f}s")
+        logger.info(
+            f"Feedback received for '{task_name}': "
+            f"s={s}, Time={total_duration:.2f}s, Gamma={gamma:.2f}"
+        )
 
         self.estimator.feedback(task_name, s, gamma, cluster_load, total_duration)

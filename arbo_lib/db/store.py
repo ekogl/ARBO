@@ -3,7 +3,10 @@ from psycopg2.extras import RealDictCursor
 from contextlib import contextmanager
 from arbo_lib.config import Config
 from arbo_lib.core.exceptions import TaskAlreadyExistsError, TaskNotFoundError
+from arbo_lib.utils.logger import get_logger
 from typing import Optional, List, Dict
+
+logger = get_logger("arbo.db_store")
 
 class ArboState:
     """
@@ -40,12 +43,12 @@ class ArboState:
                     yield cur
 
         except psycopg2.OperationalError as e:
-            print("DB connection Error")
+            logger.error("DB connection Error")
             raise e
         except psycopg2.errors.UniqueViolation as e:
             raise
         except Exception as e:
-            print("Unexpected error:", e)
+            logger.error("Unexpected error:", e)
             raise e
         finally:
             if conn:

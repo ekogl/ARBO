@@ -1,10 +1,13 @@
 import numpy as np
-from typing import List, Dict, Optional
+from typing import Optional
 
 from arbo_lib.db.store import ArboState
 from arbo_lib.core.amdahl import AmdahlUtils
 from arbo_lib.core.residual import ResidualModel
 from arbo_lib.core.exceptions import TaskNotFoundError, TaskAlreadyExistsError
+from arbo_lib.utils.logger import get_logger
+
+logger = get_logger("arbo.estimator")
 
 class ArboEstimator:
     def __init__(self):
@@ -18,14 +21,17 @@ class ArboEstimator:
         """
         params = self.store.get_task_model(task_name)
 
+        # TODO: this should take input size and not final gamma
+
         # cold start
         if not params:
-            print(f"Cold Start for task {task_name}, forcing s=1")
+            logger.warning(f"'{task_name}' not found in DB. Triggering COLD START initialization.")
             return 1
 
         # calibration run with moderately degree of parallelism
         if params["sample_count"] == 1:
-            print(f"Calibration run for {task_name} forcing s=5")
+            # TODO: make s adjustible via config
+            logger.info(f"Calibration run for '{task_name}'; forcing s=5")
             return 5
 
         # train GP on last 50 executions
@@ -74,7 +80,7 @@ class ArboEstimator:
 
         # cold start
         if not params:
-            print(f"Initializing {task_name}")
+            logger.info(f"Initializing baseline metrics for '{task_name}' via feedback.")
 
             try:
                 self.store.initialize_task(task_name=task_name, t_base=t_actual)
@@ -86,7 +92,7 @@ class ArboEstimator:
                 return
             except TaskAlreadyExistsError:
                 # TODO: properly handle exception
-                print(f"Task {task_name} already exists in DB")
+                logger.warning(f"Task {task_name} already exists in DB")
                 params = self.store.get_task_model(task_name)
 
 
@@ -122,7 +128,7 @@ class ArboEstimator:
         try:
             self.store.update_model(task_name, new_p=new_p, run_data=run_data)
         except TaskNotFoundError:
-            print(f"Task {task_name} not found in DB")
+            logger.error(f"Task {task_name} not found in DB")
 
 
 
