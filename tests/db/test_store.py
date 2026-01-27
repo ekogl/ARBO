@@ -23,7 +23,7 @@ def test_initialize_duplicate_task(db_clean):
     with pytest.raises(TaskAlreadyExistsError):
         store.initialize_task(task_name=task_name, t_base=100.0)
 
-def test_update_and_history(db_clean):
+def test_update_and_history_1(db_clean):
     store = ArboState()
     task_name = "test_task_2"
 
@@ -43,7 +43,7 @@ def test_update_and_history(db_clean):
 
     updated_model = store.get_task_model(task_name)
     assert updated_model["p_obs"] == 0.8
-    assert updated_model["sample_count"] == 2
+    assert updated_model["sample_count"] == 1
 
     history = store.get_history(task_name)
     assert len(history) == 1
@@ -53,6 +53,60 @@ def test_update_and_history(db_clean):
     assert history[0]["total_duration"] == 110
     assert history[0]["residual"] == 10
     assert history[0]["cost_metric"] == 100
+
+def test_update_and_history_2(db_clean):
+    store = ArboState()
+    task_name = "test_task_2"
+
+    store.initialize_task(task_name=task_name, t_base=100.0, alpha=0.5)
+
+    run_data_1 = {
+        "task_name": task_name,
+        "s": 4,
+        "gamma": 1.2,
+        "cluster_load": 12,
+        "total_duration": 110,
+        "residual": 10,
+        "cost_metric": 100,
+        "p_snapshot": 0.8
+    }
+
+    store.update_model(task_name, new_p=0.8, run_data=run_data_1)
+
+    # check model after 1st run
+    model_1 = store.get_task_model(task_name)
+    assert model_1["p_obs"] == 0.8
+    assert model_1["sample_count"] == 1
+
+    run_data_2 = {
+        "task_name": task_name,
+        "s": 6,
+        "gamma": 1.5,
+        "cluster_load": 5,
+        "total_duration": 90,
+        "residual": 5,
+        "cost_metric": 150,
+        "p_snapshot": 0.75
+    }
+
+    store.update_model(task_name, new_p=0.75, run_data=run_data_2)
+
+    # check model after 2nd run
+    model_2 = store.get_task_model(task_name)
+    assert model_2["p_obs"] == 0.75
+    assert model_2["sample_count"] == 2
+
+    # check history
+    history = store.get_history(task_name)
+    assert len(history) == 2
+
+    run1 = next(r for r in history if r["parallelism"] == 4)
+    assert run1["p_snapshot"] == 0.8
+    assert run1["input_scale_factor"] == 1.2
+
+    run2 = next(r for r in history if r["parallelism"] == 6)
+    assert run2["p_snapshot"] == 0.75
+    assert run2["input_scale_factor"] == 1.5
 
 def test_update_missing_task(db_clean):
     store = ArboState()

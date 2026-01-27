@@ -11,7 +11,7 @@ class ResidualModel:
     """
 
     def __init__(self):
-        kernel = C(1.0, (1e-3, 1e3)) * RBF([10, 1, 10], (1e-2, 1e2))
+        kernel = C(1.0, (1e-3, 1e4)) * RBF([10, 1, 10], (1e-2, 1e2))
         self.model = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=2, alpha=1.0)
         self.is_trained = False
 

@@ -5,7 +5,7 @@ CREATE TABLE task_models (
     c_startup FLOAT,           -- Fixed overhead (e.g., pod spin-up)
     alpha FLOAT DEFAULT 0.3,   -- Learning rate for p_obs
     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    sample_count INT DEFAULT 1
+    sample_count INT DEFAULT 0
 );
 
 CREATE TABLE execution_history (
@@ -17,6 +17,7 @@ CREATE TABLE execution_history (
     total_duration FLOAT NOT NULL,      -- Actual T (Wall Clock Time)
     residual FLOAT NOT NULL,            -- T_actual - T_amdahl
     cost_metric FLOAT,                 -- Cost of run
+    p_snapshot FLOAT,                  -- p of execution
     recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

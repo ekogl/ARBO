@@ -121,8 +121,8 @@ class ArboState:
 
         # query for inserting execution
         sql_insert_history = """
-        INSERT INTO execution_history (task_name, parallelism, input_scale_factor, cluster_load, total_duration, residual, cost_metric)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO execution_history (task_name, parallelism, input_scale_factor, cluster_load, total_duration, residual, cost_metric, p_snapshot)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """
 
         with self._get_cursor() as cur:
@@ -138,5 +138,6 @@ class ArboState:
                 run_data["cluster_load"],
                 run_data["total_duration"],
                 run_data["residual"],
-                run_data["cost_metric"]
+                run_data["cost_metric"],
+                run_data.get("p_snapshot", new_p)
             ))
