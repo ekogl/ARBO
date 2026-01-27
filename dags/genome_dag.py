@@ -1,5 +1,6 @@
 import time
 import boto3
+from botocore.client import Config
 from airflow import DAG
 from airflow.providers.cncf.kubernetes.operators.pod import KubernetesPodOperator
 from airflow.decorators import task
@@ -29,7 +30,7 @@ MINIO_BUCKET = "genome-data"
 KEY_INPUT_INDIVIDUAL = "ALL.chr22.80000.vcf.gz"
 KEY_INPUT_SIFTING = "ALL.chr22.phase3_shapeit2_mvncall_integrated_v5.20130502.sites.annotation.vcf.gz"
 
-TOTAL_ITEMS = 25000
+TOTAL_ITEMS = 50000
 
 NAMESPACE = "default"
 
@@ -60,7 +61,14 @@ with DAG(
         # TODO: figure out way to get cluster load (will use 0 for now)
 
         try:
-            s3 = boto3.client("s3", endpoint_url=f"http://localhost", aws_access_key_id=MINIO_ACCESS_KEY, aws_secret_access_key=MINIO_SECRET_KEY)
+            s3 = boto3.client(
+                "s3",
+                # endpoint_url=f"http://localhost:9000",  # TODO: works after port forwarding
+                endpoint_url=f"http://{MINIO_ENDPOINT}",
+                aws_access_key_id=MINIO_ACCESS_KEY,
+                aws_secret_access_key=MINIO_SECRET_KEY,
+                config=Config(signature_version='s3v4'),
+            )
             obj = s3.head_object(Bucket=MINIO_BUCKET, Key=f"input/{KEY_INPUT_INDIVIDUAL}")
             input_quantity = obj["ContentLength"]
             logger.info(f"MinIO Query Success: Input Size is {input_quantity} bytes")
