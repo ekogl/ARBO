@@ -634,6 +634,8 @@
 	
 	where $\alpha$ is the learning rate.
 	
+	In the code $\alpha$ is set to $0.3$ as default value (can change)
+	
 	
 	\subsubsection*{Input Size}
 	Since the execution time of workflows highly depends on the input size, the model needs to be aware of it. Using absolute units (e.g. "seconds per MB of data") is very problematic (e.g. number of genome chunks vs. number of images (IISAS)).
@@ -712,7 +714,7 @@
 		Estimate fixed infrastructure overhead (e.g., Pod spin-up time). This is treated as a constant.
 		
 		\item \textbf{Initial Parallel Execution:} 
-		Execute the workflow once with a moderate parallelism (e.g., $s=4$). Record the observed time $T_{obs}$ and the cluster load $L_{probe}$.
+		Execute the workflow once with a moderate parallelism (e.g., $s=5$ (as of current implementation)). Record the observed time $T_{obs}$ and the cluster load $L_{probe}$.
 		
 		\item \textbf{Derive Initial $p_{obs}$:} 
 		Calculate the initial parallelizable fraction using the inverse Amdahl function:
@@ -722,7 +724,7 @@
 		\item \textbf{Initialize GP:} 
 		Initialize the Gaussian Process with the data point from the probe execution. The initial training pair $(\mathbf{x}, y)$ is:
 		\[
-		\mathbf{x} = [s=4, \gamma=1, L_{probe}], \quad y = T_{obs} - T_{Amdahl}(4, 1)
+		\mathbf{x} = [s=5, \gamma=1, L_{probe}], \quad y = T_{obs} - T_{Amdahl}(s, \gamma)
 		\]
 	\end{enumerate}
 	
@@ -730,7 +732,7 @@
 	For every new ($k$) requested execution the following steps are performed:
 	
 	\begin{enumerate}
-		\item \textbf{Model Retrieval:} Retrieve the specific parameters ($p_{obs}$, $N_{base}$, ...) and the (trained) GP from a registry (e.g. database, or similar)
+		\item \textbf{Model Retrieval:} Retrieve the specific parameters ($p_{obs}$, $N_{base}$, ...) and the (trained) GP from a registry (e.g. database, or similar) (currently PostgreSQL database in docker)
 		
 		\item \textbf{Context Gathering:} 
 		\begin{itemize}
@@ -747,13 +749,23 @@
 		\item \textbf{Prediction:} For a given candidate range $s \in [1, S_{max}]$ calculate the predicted execution time:
 		
 		\[
-		P(s, \gamma, L_{cluster}) = \underbrace{C_{startup} + \gamma \cdot \left((1 - p_{obs}) \cdot T_{base}(1)\right) + \gamma \cdot \left(\frac{p_{obs}}{s} \cdot T_{base}(1)\right)}_{T_{Amdahl(s, \gamma)}} + \underbrace{GP(s, \gamma, L_{cluster})}_{R(\mathbf{x})}
+		P(s, \gamma, L_{cluster}) = \underbrace{C_{startup} + \gamma \cdot \left[ (1 - p_{obs}) \cdot T(1) + \frac{p_{obs}}{s} \cdot T(1) \right]}_{T_{Amdahl(s, \gamma)}} + \underbrace{GP(s, \gamma, L_{cluster})}_{R(\mathbf{x})}
 		\]
 		\item \textbf{Decision:} Select optimal $S_{opt}$ that minimizes the Score function (balancing Cost vs. Speed):
 		\[
 		s_{opt} = \underset{s}{\mathrm{argmin}} \left( P(s, \gamma, L_{cluster})^a \cdot \text{Cost}(s) \right) \qquad \text{original formula used Cost(p), check!}
 		\]
 		where $a$ is the urgency factor ($a$ = $0.5$ $\to$ save money; $a$ = $1$ $\to$ balance; $a$ = $2$ $\to$ save time)
+		
+		Current implementation: does not contain $a$ and uses:
+		\[
+		cost(t, s) = t \cdot \sqrt{s}
+		\]
+		so
+		\[
+		s_{opt} = \underset{s}{argmin}\left( t_{pred} \cdot \sqrt{s}\right)
+		\]
+		
 		\item \textbf{Execution \& Feedback:} Execute task with $s_{opt}$ and measure actual execution time $T_{actual}$
 		\item \textbf{Model Update:} 
 		\begin{itemize}
@@ -775,7 +787,7 @@
 	\end{enumerate}
 	
 	\subsubsection*{Model Maintenance: Rolling Window Strategy}
-	To maintain low computational overhead and ensure adaptability to "Concept Drift" (e.g., permanent shifts in cluster performance, hardware upgrades, or changes in baseline load), the Gaussian Process is restricted to a fixed-size history buffer $W$ (e.g., $W=500$). 
+	To maintain low computational overhead and ensure adaptability to "Concept Drift" (e.g., permanent shifts in cluster performance, hardware upgrades, or changes in baseline load), the Gaussian Process is restricted to a fixed-size history buffer $W$ (e.g., $W=50$ (as of current implementation)). 
 	
 	Instead of training on the potentially infinite set of all historical executions $\mathcal{H}_{all}$, the model uses a localized training set $\mathcal{H}_{active}$ containing only the $W$ most recent observations:
 	
