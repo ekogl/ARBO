@@ -5,6 +5,7 @@ CREATE TABLE task_models (
     c_startup FLOAT,           -- Fixed overhead (e.g., pod spin-up)
     alpha FLOAT DEFAULT 0.3,   -- Learning rate for p_obs
     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    base_input_quantity FLOAT DEFAULT 1,
     sample_count INT DEFAULT 0
 );
 

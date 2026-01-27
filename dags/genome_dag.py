@@ -1,4 +1,5 @@
 import time
+import boto3
 from airflow import DAG
 from airflow.providers.cncf.kubernetes.operators.pod import KubernetesPodOperator
 from airflow.decorators import task
@@ -8,6 +9,9 @@ from datetime import datetime, timedelta
 from airflow.utils.trigger_rule import TriggerRule
 
 from arbo_lib.airflow.optimizer import ArboOptimizer
+from arbo_lib.utils.logger import get_logger
+
+logger = get_logger("arbo.genome_dag")
 
 default_args = {
     "owner": 'user',
@@ -52,13 +56,22 @@ with DAG(
         optimizer = ArboOptimizer()
         start_time = time.time()
 
-        # TODO: figure out way to get gamma (will use 1 for now)
+        cluster_load = 0.0
         # TODO: figure out way to get cluster load (will use 0 for now)
 
-        # TODO: try with random values for cluster load
-        gamma = 0.5
-        configs = optimizer.get_task_configs("genome_individual", gamma=gamma, cluster_load=0.0)
+        try:
+            s3 = boto3.client("s3", endpoint_url=f"http://localhost", aws_access_key_id=MINIO_ACCESS_KEY, aws_secret_access_key=MINIO_SECRET_KEY)
+            obj = s3.head_object(Bucket=MINIO_BUCKET, Key=f"input/{KEY_INPUT_INDIVIDUAL}")
+            input_quantity = obj["ContentLength"]
+            logger.info(f"MinIO Query Success: Input Size is {input_quantity} bytes")
+        except Exception as e:
+            logger.warning(f"MinIO Query Failed ({e}). Falling back to static TOTAL_ITEMS.")
+            input_quantity = TOTAL_ITEMS
+
+        configs = optimizer.get_task_configs("genome_individual", input_quantity=input_quantity, cluster_load=cluster_load)
         s_opt = len(configs)
+
+        calculated_gamma = configs[0]["gamma"]
 
         chunk_size = TOTAL_ITEMS // s_opt
 
@@ -86,15 +99,15 @@ with DAG(
             file_key = f'chr22n-{counter}-{stop}.tar.gz'
             merge_keys.append(file_key)
 
-        print(f"PLAN: s={s_opt}, chunk_size={chunk_size}")
+        logger.info(f"PLAN: s={s_opt}, chunk_size={chunk_size}")
 
         return {
             "pod_arguments": pod_argument_list,
             "merge_keys_str": ",".join(merge_keys),
             "s": s_opt,
             "start_time": start_time,
-            "gamma": gamma,
-            "cluster_load": 10
+            "gamma": calculated_gamma,
+            "cluster_load": cluster_load
         }
 
     plan = prepare_individual_tasks()

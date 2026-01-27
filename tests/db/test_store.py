@@ -6,28 +6,30 @@ def initialize_task_test(db_clean):
     store = ArboState()
     task_name = "test_task_1"
 
-    store.initialize_task(task_name=task_name, t_base=100.0)
+    store.initialize_task(task_name=task_name, t_base=100.0, base_input_quantity=100)
 
     model = store.get_task_model(task_name)
     assert model is not None
     assert model["task_name"] == task_name
     assert model["t_base_1"] == 100.0
     assert model["p_obs"] == 1.0
+    assert model["sample_count"] == 0
+    assert model["base_input_quantity"] == 100
 
 def test_initialize_duplicate_task(db_clean):
     store = ArboState()
     task_name = "duplicate_task"
 
-    store.initialize_task(task_name=task_name, t_base=100.0)
+    store.initialize_task(task_name=task_name, t_base=100.0, base_input_quantity=100)
 
     with pytest.raises(TaskAlreadyExistsError):
-        store.initialize_task(task_name=task_name, t_base=100.0)
+        store.initialize_task(task_name=task_name, t_base=100.0, base_input_quantity=100)
 
 def test_update_and_history_1(db_clean):
     store = ArboState()
     task_name = "test_task_2"
 
-    store.initialize_task(task_name=task_name, t_base=100.0)
+    store.initialize_task(task_name=task_name, t_base=100.0, base_input_quantity=100)
 
     run_data = {
         "task_name": task_name,
@@ -58,7 +60,7 @@ def test_update_and_history_2(db_clean):
     store = ArboState()
     task_name = "test_task_2"
 
-    store.initialize_task(task_name=task_name, t_base=100.0, alpha=0.5)
+    store.initialize_task(task_name=task_name, t_base=100.0, alpha=0.5, base_input_quantity=100)
 
     run_data_1 = {
         "task_name": task_name,

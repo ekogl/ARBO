@@ -12,19 +12,19 @@ class ArboOptimizer:
         self.estimator = ArboEstimator()
 
     # TODO: handle cluster load properly
-    def get_task_configs(self, task_name: str, gamma: float, cluster_load: float = 0.0, max_time_slo: float = None) -> List[Dict]:
+    def get_task_configs(self, task_name: str, input_quantity: float, cluster_load: float = 0.0, max_time_slo: float = None) -> List[Dict]:
         """
         Gets optimal value for 's' from estimator
         Returns a list of 's' configuration dictionaries for Airflow's dynamic task mapping
+        :param input_quantity:
         :param task_name:
-        :param gamma:
         :param cluster_load:
         :param max_time_slo:
         :return:
         """
-        s_opt = self.estimator.predict(task_name=task_name, gamma=gamma, cluster_load=cluster_load, max_time_slo=max_time_slo)
+        s_opt, calculated_gamma = self.estimator.predict(task_name=task_name, input_quantity=input_quantity, cluster_load=cluster_load, max_time_slo=max_time_slo)
 
-        logger.info(f"Request received for '{task_name}': Gamma={gamma}, Load={cluster_load}")
+        logger.info(f"Request received for '{task_name}': Input Quantity={input_quantity}, Load={cluster_load}")
 
         # create config list for dynamic task mapping
         configs = []
@@ -32,7 +32,7 @@ class ArboOptimizer:
             configs.append({
                 "chunk_id": i,
                 "total_chunks": s_opt,
-                "gamma": gamma,
+                "gamma": calculated_gamma,
                 "task_name": task_name
             })
 

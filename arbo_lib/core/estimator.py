@@ -14,7 +14,7 @@ class ArboEstimator:
         self.store = ArboState()
         self.residual_model = ResidualModel()
 
-    def predict(self, task_name: str, gamma: float, cluster_load: float, max_time_slo: Optional[float] = None) -> int:
+    def predict(self, task_name: str, input_quantity: float, cluster_load: float, max_time_slo: Optional[float] = None) -> tuple[int, float]:
         """
         Main Optimization loop, return optimal 's'
         :return:
@@ -26,13 +26,20 @@ class ArboEstimator:
         # cold start
         if not params:
             logger.warning(f"'{task_name}' not found in DB. Triggering COLD START initialization.")
-            return 1
+            self.store.initialize_task(task_name=task_name, t_base=0, base_input_quantity=input_quantity)
+            return 1, 1.0
+
+        # get baseline input quantity
+        base_input_quantity = params["base_input_quantity"]
+        gamma = input_quantity / base_input_quantity if base_input_quantity > 0 else 1.0
 
         # calibration run with moderately degree of parallelism
         if params["sample_count"] == 1:
             # TODO: make s adjustible via config
             logger.info(f"Calibration run for '{task_name}'; forcing s=5")
-            return 5
+            return 5, gamma
+
+
 
         # train GP on last 50 executions
         history = self.store.get_history(task_name, limit=50)
@@ -68,7 +75,7 @@ class ArboEstimator:
             #     best_s = s
 
 
-        return int(best_s)
+        return int(best_s), gamma
 
 
     def feedback(self, task_name: str, s: int, gamma: float, cluster_load: float, t_actual: float) -> None:
@@ -79,15 +86,16 @@ class ArboEstimator:
         params = self.store.get_task_model(task_name)
 
         # cold start
-        if not params:
+        if not params or params["sample_count"] == 0:
             logger.info(f"Initializing baseline metrics for '{task_name}' via feedback.")
 
             try:
-                self.store.initialize_task(task_name=task_name, t_base=t_actual)
+                # self.store.initialize_task(task_name=task_name, t_base=t_actual)
 
                 # TODO: implement proper cost function
                 cost = t_actual * (s ** 0.5)
                 run_data = self._pack_run_data(task_name, s, gamma, cluster_load, t_actual, residual=0, cost=cost, p_snapshot=1.0)
+                self.store.update_baseline(task_name, t_actual)
                 self.store.update_model(task_name, new_p=1, run_data=run_data)
                 return
             except TaskAlreadyExistsError:

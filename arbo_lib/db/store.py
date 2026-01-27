@@ -47,6 +47,8 @@ class ArboState:
             raise e
         except psycopg2.errors.UniqueViolation as e:
             raise
+        except TaskNotFoundError as e:
+            raise
         except Exception as e:
             logger.error("Unexpected error:", e)
             raise e
@@ -54,7 +56,7 @@ class ArboState:
             if conn:
                 conn.close()
 
-    def initialize_task(self, task_name: str, t_base: float, p: float = 1, c_startup: float = 6, alpha: float = 0.3) -> None:
+    def initialize_task(self, task_name: str, t_base: float, base_input_quantity: float, p: float = 1, c_startup: float = 6, alpha: float = 0.3) -> None:
         """
         Creates new db entry for a new task
         Raises TaskAlreadyExistsError if task already exists
@@ -66,15 +68,20 @@ class ArboState:
         :return:
         """
         query = """
-        INSERT INTO task_models (task_name, t_base_1, p_obs, c_startup, alpha)
-            VALUES (%s, %s, %s, %s, %s)
+        INSERT INTO task_models (task_name, t_base_1, base_input_quantity, p_obs, c_startup, alpha)
+            VALUES (%s, %s, %s, %s, %s, %s)
         """
 
         try:
             with self._get_cursor() as cur:
-                cur.execute(query, (task_name, t_base, p, c_startup, alpha,))
+                cur.execute(query, (task_name, t_base, base_input_quantity, p, c_startup, alpha,))
         except psycopg2.errors.UniqueViolation as e:
             raise TaskAlreadyExistsError(f"Task {task_name} already exists in DB")
+
+    def update_baseline(self, task_name: str, new_t_base: float):
+        query = "UPDATE task_models SET t_base_1 = %s WHERE task_name = %s"
+        with self._get_cursor() as cur:
+            cur.execute(query, (new_t_base, task_name,))
 
     def get_task_model(self, task_name: str) -> Optional[dict]:
         """
