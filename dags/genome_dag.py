@@ -15,22 +15,22 @@ from arbo_lib.utils.logger import get_logger
 logger = get_logger("arbo.genome_dag")
 
 default_args = {
-    "owner": 'user',
+    "owner": "user",
     "depends_on_past": False,
     "start_date": datetime(2025, 1, 1),
     "retries": 1,
     "retry_delay": timedelta(minutes=5),
 }
 
+TOTAL_ITEMS = 80000
+
 MINIO_ENDPOINT = "minio.minio.svc.cluster.local:9000"
 MINIO_ACCESS_KEY = "minioadmin"
 MINIO_SECRET_KEY = "minioadmin"
 CHROM_NR = "22"
 MINIO_BUCKET = "genome-data"
-KEY_INPUT_INDIVIDUAL = "ALL.chr22.80000.vcf.gz"
+KEY_INPUT_INDIVIDUAL = f"ALL.chr22.{TOTAL_ITEMS}.vcf.gz"
 KEY_INPUT_SIFTING = "ALL.chr22.phase3_shapeit2_mvncall_integrated_v5.20130502.sites.annotation.vcf.gz"
-
-TOTAL_ITEMS = 50000
 
 NAMESPACE = "default"
 
@@ -54,17 +54,21 @@ with DAG(
     # setup task
     @task()
     def prepare_individual_tasks():
+        import psutil
+
         optimizer = ArboOptimizer()
         start_time = time.time()
 
-        cluster_load = 0.0
+        # cluster_load = 0.0
         # TODO: figure out way to get cluster load (will use 0 for now)
+        mem = psutil.virtual_memory()
+        cluster_load = mem.percent / 100
+        logger.info(f"Local Simulation: RAM Usage is {mem.percent}%. Cluster Load set to {cluster_load}")
 
         try:
             s3 = boto3.client(
                 "s3",
-                # endpoint_url=f"http://localhost:9000",  # TODO: works after port forwarding
-                endpoint_url=f"http://{MINIO_ENDPOINT}",
+                endpoint_url=f"http://localhost:9000",  # TODO: works after port forwarding
                 aws_access_key_id=MINIO_ACCESS_KEY,
                 aws_secret_access_key=MINIO_SECRET_KEY,
                 config=Config(signature_version='s3v4'),
