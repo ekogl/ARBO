@@ -786,6 +786,75 @@
 		\end{itemize}
 	\end{enumerate}
 	
+	\subsubsection*{Cost Function and proper Search Space}
+	Since for now the Cost function
+	
+	\[
+	cost(t, s) = t \cdot \sqrt{s}
+	\]
+	
+	 is a trade-off between execution time and number of machines (don't scale linearly), the optimal search space for the decision step in the algorithm can be found with the following:
+	 
+	 According to Amdahl's Law, time is proportional to $(1-p) + \frac{p}{s}$ and given the cost function definition this leads to:
+	 
+	 \begin{align*}
+	 	Cost(s) &\approx \left((1-p) + \frac{p}{s}\right) \cdot s^{0.5} \\[7pt]
+	 	&\approx (1-p)^{0.5} + ps^{-0.5}
+	 \end{align*}
+	 
+	 Optimization:
+	 
+	 \begin{align*}
+	 	\frac{dCost}{ds} = 0.5(1-p)s^{-0.5} - 0.5 \cdot ps^{-1.5} = 0 \\[7pt]
+	 	(1-p)^{-0.5} = ps^{-1.5}
+	 \end{align*}
+	 
+	 Multiplying both sides by $s^{1.5}$
+	 
+	 \begin{align*}
+	 	(1-p)s = p \\[7pt]
+	 	s = \frac{p}{1-p}
+	 \end{align*}
+	 
+	 This derivation is used to dynamically set the search space for each task, to mitigate possible errors of $p$, the search space if defined as follows:
+	 \[
+	 [1, 1.2s] \quad [0.5s, 1.5s] \quad [1, 1.5s]
+	 \]
+	 
+	 \paragraph*{Alternative Approach}
+	 Another approach would be to base the search space on the maximal speed-up (disregarding cost totally):
+	 
+	 \[
+	 S_{max} = \frac{p}{1-p}
+	 \]
+	
+	Then there is a definition of "good enough" to improve efficiency, the target efficiency $\eta$ specifies how close to theoretical solution search should go (0.9 0.95), leading to the following formula:
+	
+	\[
+	s = \frac{1}{1-p} \cdot \frac{\eta}{1 - \eta}
+	\]
+	
+	Proof:
+	Let $S(s)$ (speedup using $s$) be $\eta$ times the maximum speedup $S_{max}$:
+	
+	\[
+	\frac{1}{(1-p) + \frac{p}{s}} = \eta \cdot \frac{1}{1-p}
+	\]
+	Inverting both sides:
+	\[
+	(1-p) + \frac{p}{s} = \frac{1-p}{\eta}
+	\]
+	Subtracting $(1-p)$:
+	\begin{align*}
+		\frac{p}{s} &= \frac{1-p}{\eta} - (1-p) \\
+		&= (1-p) \cdot \left(\frac{1}{\eta} -1\right) \\
+		&= (1-p) \cdot \frac{1-\eta}{\eta}
+	\end{align*}
+	Solving for $s$ (invert and multiply by $p$):
+	\[
+	s = \frac{p}{1-p} \cdot \frac{\eta}{1 - \eta}
+	\]
+	
 	\subsubsection*{Model Maintenance: Rolling Window Strategy}
 	To maintain low computational overhead and ensure adaptability to "Concept Drift" (e.g., permanent shifts in cluster performance, hardware upgrades, or changes in baseline load), the Gaussian Process is restricted to a fixed-size history buffer $W$ (e.g., $W=50$ (as of current implementation)). 
 	
