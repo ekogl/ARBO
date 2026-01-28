@@ -51,6 +51,8 @@ with DAG(
         max_active_tasks=20,
 ) as dag:
 
+    populations = ["EUR", "AFR", "EAS", "ALL", "GBR", "SAS", "AMR"]
+
     # setup task
     @task()
     def prepare_individual_tasks():
@@ -125,11 +127,33 @@ with DAG(
     plan = prepare_individual_tasks()
 
     @task
+    def prepare_frequency_tasks():
+        # TODO: implement logic for creating list of list for expand
+        pass
+
+
+    @task
     def extract_pod_args(data: dict):
         return data["pod_arguments"]
 
+    @task
+    def extract_merge_keys(data: dict):
+        return data["merge_keys_str"]
+
+    @task
+    def mutations_overlap_data(pops: list):
+        data = []
+        for pop in pops:
+            data.append([
+                "--chromNr", CHROM_NR,
+                "--POP", pop,
+                "bucket_name", MINIO_BUCKET,
+            ])
+        return data
 
     pod_args_clean = extract_pod_args(plan)
+    merge_keys = extract_merge_keys(plan)
+    mutations_data = mutations_overlap_data(populations)
 
     # real individual task via dynamic mapping
     individual_tasks = KubernetesPodOperator.partial(
@@ -146,6 +170,56 @@ with DAG(
         execution_timeout=timedelta(hours=1),
     ).expand(
         arguments=pod_args_clean
+    )
+
+    # Sifting task
+    siftting_task = KubernetesPodOperator(
+        task_id="sifting",
+        name="sifting",
+        namespace=NAMESPACE,
+        image="kogsi/genome_dag:sifting",
+        cmds=["python3", "sifting.py"],
+        arguments=[
+            "--key_input", KEY_INPUT_SIFTING,
+            "--bucket_name", MINIO_BUCKET,
+            "--bucket_name", MINIO_BUCKET
+        ],
+        env_vars=minio_env_vars,
+        get_logs=True,
+        image_pull_policy="IfNotPresent",
+        is_delete_operator_pod=True,
+    )
+
+    # Individuals Merge task
+    individuals_merge_task = KubernetesPodOperator(
+        task_id="individuals_merge",
+        name="individuals_merge",
+        namespace=NAMESPACE,
+        image="kogsi/genome_dag:individuals-merge",
+        cmds=["python3", "individuals-merge.py"],
+        arguments=[
+            "--chromNr", CHROM_NR,
+            "--keys", merge_keys,
+            "--bucket_name", MINIO_BUCKET
+        ],
+        env_vars=minio_env_vars,
+        get_logs=True,
+        image_pull_policy="IfNotPresent",
+        is_delete_operator_pod=True,
+    )
+
+    mutations_tasks = KubernetesPodOperator.partial(
+        task_id="mutations_overlap",
+        name="mutations-overlap",
+        namespace=NAMESPACE,
+        image="kogsi/genome_dag:mutations-overlap",
+        cmds=["python3", "mutations-overlap.py"],
+        env_vars=minio_env_vars,
+        get_logs=True,
+        is_delete_operator_pod=True,
+        image_pull_policy="IfNotPresent",
+    ).expand(
+        arguments=mutations_data
     )
 
     # feedback task
@@ -167,3 +241,6 @@ with DAG(
         )
 
     individual_tasks >> report_feedback(plan)
+
+    individual_tasks >> individuals_merge_task >> mutations_tasks
+    siftting_task >> mutations_tasks
