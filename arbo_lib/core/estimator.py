@@ -21,8 +21,6 @@ class ArboEstimator:
         """
         params = self.store.get_task_model(task_name)
 
-        # TODO: this should take input size and not final gamma
-
         # cold start
         if not params:
             logger.warning(f"'{task_name}' not found in DB. Triggering COLD START initialization.")
@@ -39,18 +37,18 @@ class ArboEstimator:
             logger.info(f"Calibration run for '{task_name}'; forcing s=5")
             return 5, gamma
 
-
-
         # train GP on last 50 executions
         history = self.store.get_history(task_name, limit=50)
         self.residual_model.train(history)
 
-        # TODO: smart way to figure out search space [1, x] -> maybe based on p?
+        # TODO: maybe scale max_s to make sure
+        max_s = self._find_search_space(params["p_obs"])
         best_s = 1
-        # best_time = float("inf")
         best_score = float("inf")
 
-        candidates_s = np.arange(1, 21)
+        candidates_s = np.arange(1, max_s * 1.2)
+
+        logger.info(f"Searching for optimal s in range [{1}, {max_s*1.2}]")
 
         residuals = self.residual_model.predict(candidates_s, gamma, cluster_load)
 
@@ -64,15 +62,11 @@ class ArboEstimator:
             if max_time_slo and t_total > max_time_slo:
                 continue
 
-            # TODO: implement proper cost function
-            cost = t_total * (s ** 0.5)
+            cost = self._cost_function(t_total, s)
 
             if cost < best_score:
                 best_score = cost
                 best_s = s
-            # if t_total < best_time:
-            #     best_time = t_total
-            #     best_s = s
 
 
         return int(best_s), gamma
@@ -92,8 +86,7 @@ class ArboEstimator:
             try:
                 # self.store.initialize_task(task_name=task_name, t_base=t_actual)
 
-                # TODO: implement proper cost function
-                cost = t_actual * (s ** 0.5)
+                cost = self._cost_function(t_actual, s)
                 run_data = self._pack_run_data(task_name, s, gamma, cluster_load, t_actual, residual=0, cost=cost, p_snapshot=1.0)
                 self.store.update_baseline(task_name, t_actual)
                 self.store.update_model(task_name, new_p=1, run_data=run_data)
@@ -130,8 +123,8 @@ class ArboEstimator:
         )
 
         residual = t_actual - t_theory
-        # TODO: update cost metric
-        cost = t_actual * (s** 0.5)
+        cost = self._cost_function(t_actual, s)
+
         run_data = self._pack_run_data(task_name, s, gamma, cluster_load, t_actual, residual, cost, new_p)
         try:
             self.store.update_model(task_name, new_p=new_p, run_data=run_data)
@@ -139,6 +132,17 @@ class ArboEstimator:
             logger.error(f"Task {task_name} not found in DB")
 
 
+    def _cost_function(self, t: float, s: int):
+        """
+        Cost function to optimize
+        :param t:
+        :param s:
+        :return:
+        """
+        return t * (s ** 0.5)
+
+    def _find_search_space(self, p) -> int:
+        return int(p / (1-p))
 
 
     def _pack_run_data(self, task, s, gamma, cluster_load, time, residual, cost, p_snapshot):
