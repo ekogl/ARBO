@@ -52,41 +52,31 @@ with DAG(
     # setup task
     @task
     def prepare_pipeline_configs():
-        import psutil
-
         optimizer = ArboOptimizer()
-        start_time = time.time()
 
         # TODO: change later
-        mem = psutil.virtual_memory()
-        cluster_load = mem.percent / 100
+        cluster_load = optimizer.get_virtual_memory()
 
-        try:
-            s3 = boto3.client(
-                "s3",
-                endpoint_url=f"http://localhost:9000",
-                aws_access_key_id=MINIO_ACCESS_KEY,
-                aws_secret_access_key=MINIO_SECRET_KEY,
-                config=Config(signature_version="s3v4")
-            )
-            paginator = s3.get_paginator("list_objects_v2")
+        input_quantity = optimizer.get_directory_size(
+            endpoint_url="http://localhost:9000",
+            access_key=MINIO_ACCESS_KEY,
+            secret_key=MINIO_SECRET_KEY,
+            bucket_name=MINIO_BUCKET,
+            prefix="training/input"
+        )
 
-            total_size = 0
-
-            for page in paginator.paginate(Bucket=MINIO_BUCKET, Prefix="training/input"):
-                if "Contents" in page:
-                    for obj in page["Contents"]:
-                        total_size += obj["Size"]
-            input_quantity = total_size
-            logger.info(f"MinIO Query Successful: Total Input Size is {total_size} bytes")
-        except Exception as e:
-            logger.warning(f"MinIO Query Failed ({e}). Falling back to static TOTAL_ITEMS.")
+        if not input_quantity:
+            # TODO: figure out a better way to handle this case
+            logger.info("Falling back to default (= NUM_OF_PICTURES * 1024 * 1024)")
             input_quantity = NUM_OF_PICTURES * 1024 * 1024
 
         configs = optimizer.get_task_configs("iisas_image_training", input_quantity=input_quantity, cluster_load=cluster_load)
         s_opt = len(configs)
 
         calculated_gamma = configs[0]["gamma"]
+
+        # TODO: change later
+        start_time = time.time()
 
         logger.info(f"Configuration received: s={s_opt}, gamma={calculated_gamma}")
 

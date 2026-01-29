@@ -1,4 +1,9 @@
-from typing import List, Dict, Any
+from typing import List, Dict
+import psutil
+import boto3
+from botocore.client import Config
+from typing import Optional
+
 from arbo_lib.core.estimator import ArboEstimator
 from arbo_lib.utils.logger import get_logger
 
@@ -54,3 +59,68 @@ class ArboOptimizer:
         )
 
         self.estimator.feedback(task_name, s, gamma, cluster_load, total_duration)
+
+    @staticmethod
+    def get_filesize(endpoint_url: str, access_key: str, secret_key: str, bucket_name: str, file_key: str) -> Optional[float]:
+        """
+        Queries MinIO for file size
+        """
+        try:
+            s3 = boto3.client(
+                "s3",
+                endpoint_url=endpoint_url,
+                aws_access_key_id=access_key,
+                aws_secret_access_key=secret_key,
+                config=Config(signature_version='s3v4')
+            )
+            obj = s3.head_object(Bucket=bucket_name, Key=file_key)
+            input_quantity = obj["ContentLength"]
+            logger.info(f"MinIO Query Success: Input Size is {input_quantity} bytes")
+            return input_quantity
+        except Exception as e:
+            logger.warning(f"MinIO Query Failed ({e}). Returning None")
+            return None
+
+
+    @staticmethod
+    def get_directory_size(endpoint_url: str, access_key: str, secret_key: str, bucket_name: str, prefix: str) -> Optional[float]:
+        """
+        Queries MinIO for directory size
+        """
+        try:
+            s3 = boto3.client(
+                "s3",
+                endpoint_url=endpoint_url,
+                aws_access_key_id=access_key,
+                aws_secret_access_key=secret_key,
+                config=Config(signature_version='s3v4')
+            )
+            paginator = s3.get_paginator("list_objects_v2")
+
+            total_size = 0
+
+            for page in paginator.paginate(Bucket=bucket_name, Prefix=prefix):
+                if "Contents" in page:
+                    for obj in page["Contents"]:
+                        total_size += obj["Size"]
+            input_quantity = total_size
+            logger.info(f"MinIO Query Success: Input Size is {input_quantity} bytes")
+            return input_quantity
+        except Exception as e:
+            logger.warning(f"MinIO Query Failed ({e}). Returning None")
+            return None
+
+
+
+    # TODO: function to get cluster load
+
+    # TODO: function to get execution time of task
+
+    @staticmethod
+    def get_virtual_memory():
+        """
+        Gets virtual memory usage, returns memory usage
+        NOTE: This should not be used in production settings
+        """
+        mem = psutil.virtual_memory()
+        return mem / 100

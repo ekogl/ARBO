@@ -1,6 +1,4 @@
 import time
-import boto3
-from botocore.client import Config
 from airflow import DAG
 from airflow.providers.cncf.kubernetes.operators.pod import KubernetesPodOperator
 from airflow.decorators import task
@@ -56,36 +54,32 @@ with DAG(
     # setup task
     @task()
     def prepare_individual_tasks():
-        import psutil
-
         optimizer = ArboOptimizer()
-        start_time = time.time()
 
-        # cluster_load = 0.0
-        # TODO: figure out way to get cluster load (will use 0 for now)
-        mem = psutil.virtual_memory()
-        cluster_load = mem.percent / 100
-        logger.info(f"Local Simulation: RAM Usage is {mem.percent}%. Cluster Load set to {cluster_load}")
+        # TODO: figure out way to get cluster load (will use virtual memory for now)
+        cluster_load = optimizer.get_virtual_memory()
 
-        try:
-            s3 = boto3.client(
-                "s3",
-                endpoint_url=f"http://localhost:9000",  # TODO: works after port forwarding
-                aws_access_key_id=MINIO_ACCESS_KEY,
-                aws_secret_access_key=MINIO_SECRET_KEY,
-                config=Config(signature_version='s3v4'),
-            )
-            obj = s3.head_object(Bucket=MINIO_BUCKET, Key=f"input/{KEY_INPUT_INDIVIDUAL}")
-            input_quantity = obj["ContentLength"]
-            logger.info(f"MinIO Query Success: Input Size is {input_quantity} bytes")
-        except Exception as e:
-            logger.warning(f"MinIO Query Failed ({e}). Falling back to static TOTAL_ITEMS.")
+        logger.info(f"Local Simulation: Cluster Load set to {cluster_load}")
+
+        input_quantity = optimizer.get_filesize(
+            endpoint_url="http://localhost:9000",
+            access_key=MINIO_ACCESS_KEY,
+            secret_key=MINIO_SECRET_KEY,
+            bucket_name=MINIO_BUCKET,
+            file_key=f"input/{KEY_INPUT_INDIVIDUAL}"
+        )
+
+        if not input_quantity:
+            logger.info("Falling back to default (= TOTAL_ITEMS)")
             input_quantity = TOTAL_ITEMS
 
         configs = optimizer.get_task_configs("genome_individual", input_quantity=input_quantity, cluster_load=cluster_load)
         s_opt = len(configs)
 
         calculated_gamma = configs[0]["gamma"]
+
+        # TODO: change later
+        start_time = time.time()
 
         chunk_size = TOTAL_ITEMS // s_opt
 
