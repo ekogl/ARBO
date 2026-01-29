@@ -41,12 +41,13 @@ class ArboEstimator:
         history = self.store.get_history(task_name, limit=50)
         self.residual_model.train(history)
 
-        # TODO: maybe scale max_s to make sure
+        # TODO: maybe scale max_s to make sure  -- currently threshold is too low
         max_s = self._find_search_space(params["p_obs"])
+        max_s = max(max_s, 20)
         best_s = 1
         best_score = float("inf")
 
-        candidates_s = np.arange(1, max_s * 1.2)
+        candidates_s = np.arange(1, max_s * 10)
 
         logger.info(f"Searching for optimal s in range [{1}, {max_s*1.2}]")
 

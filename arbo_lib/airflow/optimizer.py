@@ -123,4 +123,4 @@ class ArboOptimizer:
         NOTE: This should not be used in production settings
         """
         mem = psutil.virtual_memory()
-        return mem / 100
+        return mem.percent / 100
