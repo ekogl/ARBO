@@ -1,11 +1,7 @@
 import time
-import boto3
-from airflow.cli.commands.task_command import task_state
-from botocore.client import Config
 from airflow import DAG
 from airflow.providers.cncf.kubernetes.operators.pod import KubernetesPodOperator
 from airflow.decorators import task, task_group
-from kubernetes.client import models as k8s
 from datetime import datetime, timedelta
 
 from airflow.utils.trigger_rule import TriggerRule
@@ -144,7 +140,6 @@ with DAG(
             }
         }
 
-    setup_data = prepare_pipeline_configs()
 
     @task
     def extract_configs(data: dict):
@@ -153,9 +148,6 @@ with DAG(
     @task
     def extract_metadata(data: dict):
         return data["metadata"]
-
-    pod_config_list = extract_configs(setup_data)
-    pipeline_metadata = extract_metadata(setup_data)
 
     @task_group(group_id="preprocessing_pipeline")
     def image_pipeline_group(config: dict):
@@ -303,6 +295,8 @@ with DAG(
         )
 
     pipeline_configs = prepare_pipeline_configs()
+    pod_config_list = extract_configs(pipeline_configs)
+    pipeline_metadata = extract_metadata(pipeline_configs)
 
     pipeline_instances = image_pipeline_group.expand(config=pod_config_list)
 
