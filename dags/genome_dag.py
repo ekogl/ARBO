@@ -1,7 +1,7 @@
 import time
 from airflow import DAG
 from airflow.providers.cncf.kubernetes.operators.pod import KubernetesPodOperator
-from airflow.decorators import task
+from airflow.decorators import task, task_group
 from airflow.utils.task_group import TaskGroup
 from kubernetes.client import models as k8s
 from datetime import datetime, timedelta
@@ -53,7 +53,9 @@ with DAG(
 
     populations = ["EUR", "AFR", "EAS", "ALL", "GBR", "SAS", "AMR"]
 
-    # feedback task
+    # =================================
+    # HELPER TASKS
+    # =================================
     @task(trigger_rule=TriggerRule.ALL_SUCCESS)
     def report_feedback(data: dict, task_name: str):
         optimizer = ArboOptimizer()
@@ -156,7 +158,6 @@ with DAG(
             "cluster_load": cluster_load
         }
 
-
     @task
     def prepare_frequency_tasks(pop: str):
         optimizer = ArboOptimizer()
@@ -237,9 +238,11 @@ with DAG(
         return data
 
 
-    # START OF DAG
-
-    with TaskGroup(group_id="individual_taks") as individual_group:
+    # =================================
+    # TASK GROUP DEFINITIONS
+    # =================================
+    @task_group(group_id="individual_tasks")
+    def run_individual_tasks():
         ind_plan = prepare_individual_tasks()
 
         workers = KubernetesPodOperator.partial(
@@ -275,6 +278,42 @@ with DAG(
         # workers >> merge >> feedback
         [individual_merge, feedback] << workers
 
+    # helper to run frequency tasks
+    def run_frequency_tasks(pop: str):
+        plan_data = prepare_frequency_tasks(pop)
+
+        workers = KubernetesPodOperator.partial(
+            task_id="workers",
+            name=f"freq-workers-{pop.lower()}",
+            namespace=NAMESPACE,
+            image="kogsi/genome_dag:frequency_par2",
+            cmds=["python3", "frequency_par2.py"],
+            env_vars=minio_env_vars,
+            is_delete_operator_pod=True,
+        ).expand(
+            arguments=get_w_args(plan_data)
+        )
+
+        merger = KubernetesPodOperator.partial(
+            task_id="merge",
+            name=f"freq-merge-{pop.lower()}",
+            namespace=NAMESPACE,
+            image="kogsi/genome_dag:frequency_par2",
+            cmds=["python3", "frequency_par2.py"],
+            env_vars=minio_env_vars,
+            is_delete_operator_pod=True,
+        ).expand(
+            arguments=get_m_args(plan_data)
+        )
+
+        feedback = report_feedback(plan_data, f"genome_frequency_{pop}")
+        workers >> merger >> feedback
+
+
+    # =================================
+    # WIRING OF DAG
+    # =================================
+    individual_group = run_individual_tasks()
 
     # Sifting task
     sifting_task = KubernetesPodOperator(
@@ -296,7 +335,6 @@ with DAG(
     )
 
     mutations_data = mutations_overlap_data(populations)
-
     mutations_tasks = KubernetesPodOperator.partial(
         task_id="mutations_overlap",
         name="mutations-overlap",
@@ -311,39 +349,13 @@ with DAG(
         arguments=mutations_data
     )
 
-    for pop in populations:
-        with TaskGroup(group_id=f"freq_{pop}") as frequency_group:
-
-            plan_data = prepare_frequency_tasks(pop)
-
-            workers = KubernetesPodOperator.partial(
-                task_id="workers",
-                name=f"freq-workers-{pop.lower()}",
-                namespace=NAMESPACE,
-                image="kogsi/genome_dag:frequency_par2",
-                cmds=["python3", "frequency_par2.py"],
-                env_vars=minio_env_vars,
-                is_delete_operator_pod=True,
-            ).expand(
-                arguments=get_w_args(plan_data)
-            )
-
-            merger = KubernetesPodOperator.partial(
-                task_id="merge",
-                name=f"freq-merge-{pop.lower()}",
-                namespace=NAMESPACE,
-                image="kogsi/genome_dag:frequency_par2",
-                cmds=["python3", "frequency_par2.py"],
-                env_vars=minio_env_vars,
-                is_delete_operator_pod=True,
-            ).expand(
-                arguments=get_m_args(plan_data)
-            )
-
-            feedback = report_feedback(plan_data, f"genome_frequency_{pop}")
-            workers >> merger >> feedback
-
-            [individual_group, sifting_task] >> frequency_group
-
     individual_group >> mutations_tasks
     sifting_task >> mutations_tasks
+
+    for pop in populations:
+        with TaskGroup(group_id=f"freq_{pop}") as frequency_group:
+            run_frequency_tasks(pop)
+
+        individual_group >> frequency_group
+        sifting_task >> frequency_group
+
