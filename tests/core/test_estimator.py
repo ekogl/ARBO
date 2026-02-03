@@ -7,12 +7,18 @@ def test_cold_start(db_clean):
 
     # 'prediction' for s should be 1
     input_quantity = 100
-    s_opt, gamma = estimator.predict(task_name=task_name, cluster_load=0, input_quantity=input_quantity)
+    s_opt, gamma, predicted_amdahl, predicted_residual = estimator.predict(
+        task_name=task_name, cluster_load=0, input_quantity=input_quantity
+    )
     assert s_opt == 1
     assert gamma == 1.0
+    assert predicted_amdahl == 0.0
+    assert predicted_residual == 0.0
 
     # simulate a runtime of 100 seconds
-    estimator.feedback(task_name=task_name, s=1, gamma=1.0, cluster_load=0, t_actual=100)
+    estimator.feedback(
+        task_name=task_name, s=1, gamma=1.0, cluster_load=0, t_actual=100, predicted_amdahl=0.0, predicted_residual=0.0
+    )
 
     model = estimator.store.get_task_model(task_name)
     assert model is not None
@@ -27,7 +33,9 @@ def test_optimization_logic(db_clean):
 
     estimator.store.initialize_task(task_name=task_name, t_base=100.0, base_input_quantity=100, p=0.9, c_startup=6)
 
-    s_opt, gamma = estimator.predict(task_name=task_name, cluster_load=0, input_quantity=200)
+    s_opt, gamma, predicted_amdahl, predicted_residual = estimator.predict(
+        task_name=task_name, cluster_load=0, input_quantity=200
+    )
     assert s_opt > 1
     assert gamma == 2
 
@@ -44,7 +52,9 @@ def test_moving_average_logic(db_clean):
     # SETUP:
     # Old P = 0.5
     # Alpha = 0.5
-    estimator.store.initialize_task(task_name=task_name, t_base=100.0, p=0.5, c_startup=0.0, alpha=0.5, base_input_quantity=base_input_quantity)
+    estimator.store.initialize_task(
+        task_name=task_name, t_base=100.0, p=0.5, c_startup=0.0, alpha_p=0.5, base_input_quantity=base_input_quantity
+    )
 
     # manually set sample count to 1
     with estimator.store._get_cursor() as cur:
@@ -57,7 +67,10 @@ def test_moving_average_logic(db_clean):
     # T = 100 * (0.2 + 0.4) = 60s
     t_actual = 60.0
 
-    estimator.feedback(task_name=task_name, s=2, gamma=1.0, cluster_load=0, t_actual=t_actual)
+    estimator.feedback(
+        task_name=task_name, s=2, gamma=1.0, cluster_load=0,
+        t_actual=t_actual, predicted_amdahl=0.0, predicted_residual=0.0
+    )
 
     # VERIFICATION:
     # Observed P should be 0.8 (derived from 60s runtime).

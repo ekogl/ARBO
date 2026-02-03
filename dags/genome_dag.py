@@ -21,7 +21,7 @@ default_args = {
     "retry_delay": timedelta(minutes=5),
 }
 
-TOTAL_ITEMS = 80000
+TOTAL_ITEMS = 15000
 FREQ_TOTAL_PLOTS = 1000
 
 MINIO_ENDPOINT = "minio.minio.svc.cluster.local:9000"
@@ -70,7 +70,9 @@ with DAG(
             total_duration=duration,
             s=data["s"],
             gamma=data["gamma"],
-            cluster_load=data["cluster_load"]
+            cluster_load=data["cluster_load"],
+            predicted_amdahl=data["amdahl_time"],
+            predicted_residual=data["pred_residual"]
         )
 
     @task
@@ -117,6 +119,8 @@ with DAG(
         s_opt = len(configs)
 
         calculated_gamma = configs[0]["gamma"]
+        predicted_amdahl = configs[0]["amdahl_time"]
+        predicted_residual = configs[0]["residual_prediction"]
 
         # TODO: change later
         start_time = time.time()
@@ -155,7 +159,9 @@ with DAG(
             "s": s_opt,
             "start_time": start_time,
             "gamma": calculated_gamma,
-            "cluster_load": cluster_load
+            "cluster_load": cluster_load,
+            "amdahl_time": predicted_amdahl,
+            "pred_residual": predicted_residual,
         }
 
     @task
@@ -182,6 +188,8 @@ with DAG(
         s_opt = len(configs)
 
         calculated_gamma = configs[0]["gamma"]
+        predicted_amdahl = configs[0]["amdahl_time"]
+        predicted_residual = configs[0]["residual_prediction"]
 
         chunk_size = FREQ_TOTAL_PLOTS // s_opt
 
@@ -222,7 +230,9 @@ with DAG(
             "s": s_opt,
             "gamma": calculated_gamma,
             "cluster_load": cluster_load,
-            "pop": pop
+            "pop": pop,
+            "amdahl_time": predicted_amdahl,
+            "pred_residual": predicted_residual,
         }
 
 

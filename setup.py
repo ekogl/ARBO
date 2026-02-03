@@ -8,7 +8,7 @@ setup(
         "numpy",
         "psycopg2-binary",
         "scikit-learn",
-        "apache-airflow",
-        "kubernetes"
+        "psutil",
+        "boto3"
     ]
 )

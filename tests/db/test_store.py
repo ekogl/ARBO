@@ -6,7 +6,7 @@ def initialize_task_test(db_clean):
     store = ArboState()
     task_name = "test_task_1"
 
-    store.initialize_task(task_name=task_name, t_base=100.0, base_input_quantity=100)
+    store.initialize_task(task_name=task_name, t_base=100.0, base_input_quantity=100, alpha_k=0.6, alpha_p=0.7)
 
     model = store.get_task_model(task_name)
     assert model is not None
@@ -15,6 +15,9 @@ def initialize_task_test(db_clean):
     assert model["p_obs"] == 1.0
     assert model["sample_count"] == 0
     assert model["base_input_quantity"] == 100
+    assert model["alpha_k"] == 0.6
+    assert model["alpha_p"] == 0.7
+    assert model["k_exponent"] == 1.0
 
 def test_initialize_duplicate_task(db_clean):
     store = ArboState()
@@ -38,13 +41,16 @@ def test_update_and_history_1(db_clean):
         "cluster_load": 12,
         "total_duration": 110,
         "residual": 10,
-        "cost_metric": 100
+        "cost_metric": 100,
+        "time_amdahl": 100,
+        "pred_residual": 10,
     }
 
-    store.update_model(task_name, new_p=0.8, run_data=run_data)
+    store.update_model(task_name, new_p=0.8, new_k=1.0, run_data=run_data, expected_version=0)
 
     updated_model = store.get_task_model(task_name)
     assert updated_model["p_obs"] == 0.8
+    assert updated_model["k_exponent"] == 1.0
     assert updated_model["sample_count"] == 1
 
     history = store.get_history(task_name)
@@ -60,7 +66,7 @@ def test_update_and_history_2(db_clean):
     store = ArboState()
     task_name = "test_task_2"
 
-    store.initialize_task(task_name=task_name, t_base=100.0, alpha=0.5, base_input_quantity=100)
+    store.initialize_task(task_name=task_name, t_base=100.0, alpha_p=0.5, base_input_quantity=100)
 
     run_data_1 = {
         "task_name": task_name,
@@ -70,10 +76,12 @@ def test_update_and_history_2(db_clean):
         "total_duration": 110,
         "residual": 10,
         "cost_metric": 100,
-        "p_snapshot": 0.8
+        "p_snapshot": 0.8,
+        "time_amdahl": 100,
+        "pred_residual": 10,
     }
 
-    store.update_model(task_name, new_p=0.8, run_data=run_data_1)
+    store.update_model(task_name, new_p=0.8, new_k=1.0, run_data=run_data_1, expected_version=0)
 
     # check model after 1st run
     model_1 = store.get_task_model(task_name)
@@ -88,14 +96,17 @@ def test_update_and_history_2(db_clean):
         "total_duration": 90,
         "residual": 5,
         "cost_metric": 150,
-        "p_snapshot": 0.75
+        "p_snapshot": 0.75,
+        "time_amdahl": 100,
+        "pred_residual": 10,
     }
 
-    store.update_model(task_name, new_p=0.75, run_data=run_data_2)
+    store.update_model(task_name, new_p=0.75, new_k=1.1, run_data=run_data_2, expected_version=1)
 
     # check model after 2nd run
     model_2 = store.get_task_model(task_name)
     assert model_2["p_obs"] == 0.75
+    assert model_2["k_exponent"] == 1.1
     assert model_2["sample_count"] == 2
 
     # check history
@@ -124,4 +135,4 @@ def test_update_missing_task(db_clean):
     }
 
     with pytest.raises(TaskNotFoundError):
-        store.update_model("non_existing_task", new_p=0.8, run_data=run_data)
+        store.update_model("non_existing_task", new_p=0.8, new_k=1.0, run_data=run_data, expected_version=0)

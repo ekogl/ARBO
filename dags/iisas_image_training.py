@@ -70,6 +70,8 @@ with DAG(
         s_opt = len(configs)
 
         calculated_gamma = configs[0]["gamma"]
+        predicted_amdahl = configs[0]["amdahl_time"]
+        predicted_residual = configs[0]["residual_prediction"]
 
         # TODO: change later
         start_time = time.time()
@@ -136,7 +138,9 @@ with DAG(
                 "start_time": start_time,
                 "s": s_opt,
                 "gamma": calculated_gamma,
-                "cluster_load": cluster_load
+                "cluster_load": cluster_load,
+                "amdahl_time": predicted_amdahl,
+                "pred_residual": predicted_residual
             }
         }
 
@@ -291,7 +295,9 @@ with DAG(
             total_duration=duration,
             s=metadata["s"],
             gamma=metadata["gamma"],
-            cluster_load=metadata["cluster_load"]
+            cluster_load=metadata["cluster_load"],
+            predicted_amdahl=metadata["amdahl_time"],
+            predicted_residual=metadata["pred_residual"]
         )
 
     pipeline_configs = prepare_pipeline_configs()

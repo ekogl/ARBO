@@ -17,17 +17,24 @@ class ArboOptimizer:
         self.estimator = ArboEstimator()
 
     # TODO: handle cluster load properly
-    def get_task_configs(self, task_name: str, input_quantity: float, cluster_load: float = 0.0, max_time_slo: float = None) -> List[Dict]:
+    def get_task_configs(self, task_name: str, input_quantity: float, cluster_load: float = 0.0,
+                         max_time_slo: float = None
+                         ) -> List[Dict]:
         """
         Gets optimal value for 's' from estimator
         Returns a list of 's' configuration dictionaries for Airflow's dynamic task mapping
-        :param input_quantity:
-        :param task_name:
-        :param cluster_load:
-        :param max_time_slo:
-        :return:
+        :param task_name: Unique identifier for task
+        :param input_quantity: metric representing input size
+        :param cluster_load: metric representing the cluster load
+        :param max_time_slo: (Optional) maximum acceptable runtime in seconds
+        :return: list of dictionaries, where the length of the list is 's' and each dictionary contains the configuration for a single worker
         """
-        s_opt, calculated_gamma = self.estimator.predict(task_name=task_name, input_quantity=input_quantity, cluster_load=cluster_load, max_time_slo=max_time_slo)
+        s_opt, calculated_gamma, predicted_amdahl, predicted_residual = self.estimator.predict(
+            task_name=task_name,
+            input_quantity=input_quantity,
+            cluster_load=cluster_load,
+            max_time_slo=max_time_slo
+        )
 
         logger.info(f"Request received for '{task_name}': Input Quantity={input_quantity}, Load={cluster_load}")
 
@@ -38,32 +45,42 @@ class ArboOptimizer:
                 "chunk_id": i,
                 "total_chunks": s_opt,
                 "gamma": calculated_gamma,
-                "task_name": task_name
+                "task_name": task_name,
+                "amdahl_time": predicted_amdahl,
+                "residual_prediction": predicted_residual
             })
 
         return configs
 
-    def report_success(self, task_name: str, total_duration: float, s: int, gamma: float, cluster_load: float):
+    def report_success(
+            self, task_name: str, total_duration: float, s: int, gamma: float, cluster_load: float,
+            predicted_amdahl: float, predicted_residual: float
+    ) -> None:
         """
         callback after the parallel stage is done; feeds actual execution time into the DB
-        :param task_name:
-        :param total_duration:
-        :param s:
-        :param gamma:
-        :param cluster_load:
-        :return:
+        :param task_name: Unique identifier for task
+        :param total_duration: actual execution time of the task
+        :param s: degree of parallelism (number of workers)
+        :param gamma: input scaling factor
+        :param cluster_load: metric representing cluster load
+        :param predicted_amdahl: predicted execution time based on Amdahl's Law
+        :param predicted_residual: predicted residual (overhead) by the GP
+        :return: None
         """
-        logger.info(
-            f"Feedback received for '{task_name}': "
-            f"s={s}, Time={total_duration:.2f}s, Gamma={gamma:.2f}"
-        )
+        logger.info(f"Feedback '{task_name}': Actual={total_duration:.2f}s vs Pred={predicted_amdahl + predicted_residual:.2f}s")
 
-        self.estimator.feedback(task_name, s, gamma, cluster_load, total_duration)
+        self.estimator.feedback(task_name, s, gamma, cluster_load, total_duration, predicted_amdahl, predicted_residual)
 
     @staticmethod
     def get_filesize(endpoint_url: str, access_key: str, secret_key: str, bucket_name: str, file_key: str) -> Optional[float]:
         """
         Queries MinIO for file size
+        :param endpoint_url: MinIO endpoint URL
+        :param access_key: MinIO access key
+        :param secret_key: MinIO secret key
+        :param bucket_name: MinIO bucket name
+        :param file_key: MinIO file key
+        :return: size of the file in bytes, None if the query failed
         """
         try:
             s3 = boto3.client(
@@ -86,6 +103,12 @@ class ArboOptimizer:
     def get_directory_size(endpoint_url: str, access_key: str, secret_key: str, bucket_name: str, prefix: str) -> Optional[float]:
         """
         Queries MinIO for directory size
+        :param endpoint_url: MinIO endpoint URL
+        :param access_key: MinIO access key
+        :param secret_key: MinIO secret key
+        :param bucket_name: MinIO bucket name
+        :param prefix: MinIO directory prefix
+        :return: size of the directory in bytes, None if the query failed
         """
         try:
             s3 = boto3.client(
@@ -117,10 +140,12 @@ class ArboOptimizer:
     # TODO: function to get execution time of task
 
     @staticmethod
-    def get_virtual_memory():
+    def get_virtual_memory() -> float:
         """
         Gets virtual memory usage, returns memory usage
         NOTE: This should not be used in production settings
+
+        :return: Memory usage as a normalized float (0.0 to 1.0
         """
         mem = psutil.virtual_memory()
         return mem.percent / 100

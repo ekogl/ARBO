@@ -855,6 +855,37 @@
 	s = \frac{p}{1-p} \cdot \frac{\eta}{1 - \eta}
 	\]
 	
+	\subsubsection*{Break Free from Linear Assumption in $\gamma$}
+	The previous algorithm assumed that the execution time scaled linearly with the input size, which might be problematic for various reasons. Since this might not be known beforehand, it needs a way to automatically learn the relationship between execution time and input size. Previously it was model like:
+	\[
+	T_{Amdahl} \propto \gamma \cdot (...)
+	\]
+	this can be refined to the following:
+	\[
+	T_{Amdahl} \propto \gamma^k \cdot (...)
+	\]
+	where $k$ is the complexity exponent, when $k$ $\approx$ $1$ it is linear, when $k$ = $2$ then it is quadratic and so on
+	
+	So using this the, the formula for the predicted time  becomes the following:
+	
+	\[
+	P(s, \gamma, L_{cluster}) = \underbrace{C_{startup} + \gamma^k \cdot \left[ (1 - p_{obs}) \cdot T(1) + \frac{p_{obs}}{s} \cdot T(1) \right]}_{T_{Amdahl(s, \gamma)}} + \underbrace{GP(s, \gamma, L_{cluster})}_{R(\mathbf{x})}
+	\]
+	
+	To make the model robust, it requires a dynamic way of capturing $k$
+	
+	After the completion of a task the $T_{actual}$ is known and $k$ can re reverse engineered and updated:
+	
+	\[
+	T_{scale} = T_{actual} - C_{startup} - R_{predicted}
+	\]
+	solving for $k_{current}$
+	\begin{align*}
+		T_{scale} = \gamma^k \cdot T_{base_theory} \\[7pt]
+		\gamma^k = \frac{T_{scale}}{T_{base_theory}} \\[7pt]
+		k_{current} = \frac{\ln(T_{scale}) - \ln(T_{base_theory})}{\ln(\gamma)}
+	\end{align*}
+	
 	\subsubsection*{Model Maintenance: Rolling Window Strategy}
 	To maintain low computational overhead and ensure adaptability to "Concept Drift" (e.g., permanent shifts in cluster performance, hardware upgrades, or changes in baseline load), the Gaussian Process is restricted to a fixed-size history buffer $W$ (e.g., $W=50$ (as of current implementation)). 
 	
