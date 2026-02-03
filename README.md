@@ -1,5 +1,9 @@
 # ARBO
 
+```bash
+pip install --upgrade --force-reinstall git+https://github.com/YOUR_USERNAME/arbo.git
+```
+
 This project contains a preliminary verion of the ARBO algorithm.
 
 As of now, this only work locally (Postgresql DB in a docker container and Airflow locally (in venv wiht airflow standalone))
