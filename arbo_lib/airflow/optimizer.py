@@ -144,7 +144,7 @@ class ArboOptimizer:
         :return:
         """
         prometheus_url = f"http://prometheus-server.{namespace}.svc.cluster.local/api/v1/query"
-        query = "1 - avg(rate(node_cpu_seconds_total{mode='idle}[5m]))"
+        query = '1 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m]))'
 
         try:
             response = requests.get(prometheus_url, params={"query": query}, timeout=5)
@@ -153,7 +153,7 @@ class ArboOptimizer:
                 logger.info(f"Prometheus Query Success: CPU Utilization is {results[0]['value'][1]}")
                 return float(results[0]['value'][1])
             else:
-                logger.warning("Prometheus Query Failed. Returning 0.0")
+                logger.warning("Prometheus Query Failed")
         except Exception as e:
             logger.warning(f"Prometheus Query Failed ({e}). Returning 0.0")
 
