@@ -3,6 +3,7 @@ import psutil
 import boto3
 from botocore.client import Config
 from typing import Optional
+import requests
 
 from arbo_lib.core.estimator import ArboEstimator
 from arbo_lib.utils.logger import get_logger
@@ -136,6 +137,29 @@ class ArboOptimizer:
 
 
     # TODO: function to get cluster load
+    def get_cluster_load(self, namespace: str = "default", ) -> float:
+        """
+        Queries Prometheus for actual CPU utilization across the cluster.
+        :param namespace: namespace of the Prometheus instance
+        :return:
+        """
+        prometheus_url = f"http://prometheus-server.{namespace}.svc.cluster.local/api/v1/query"
+        query = "1 - avg(rate(node_cpu_seconds_total{mode='idle}[5m]))"
+
+        try:
+            response = requests.get(prometheus_url, params={"query": query}, timeout=5)
+            results = response.json()["data"]["result"]
+            if results:
+                logger.info(f"Prometheus Query Success: CPU Utilization is {results[0]['value'][1]}")
+                return float(results[0]['value'][1])
+            else:
+                logger.warning("Prometheus Query Failed. Returning 0.0")
+        except Exception as e:
+            logger.warning(f"Prometheus Query Failed ({e}). Returning 0.0")
+
+        # TODO: properly handle failure
+        return self.get_virtual_memory()
+
 
     # TODO: function to get execution time of task
 
