@@ -140,24 +140,43 @@ class ArboOptimizer:
     def get_cluster_load(self, namespace: str = "default", ) -> float:
         """
         Queries Prometheus for actual CPU utilization across the cluster.
-        :param namespace: namespace of the Prometheus instance
-        :return:
         """
+        # We use port 80 based on your 'kubectl get svc' output
+        # Some environments prefer the shorter FQDN if the long one fails
         prometheus_url = f"http://prometheus-server.{namespace}.svc.cluster.local/api/v1/query"
+
+        # Exact PromQL syntax: Use single quotes for the python string
+        # and double quotes for the PromQL labels
         query = '1 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m]))'
 
         try:
-            response = requests.get(prometheus_url, params={"query": query}, timeout=5)
-            results = response.json()["data"]["result"]
-            if results:
-                logger.info(f"Prometheus Query Success: CPU Utilization is {results[0]['value'][1]}")
-                return float(results[0]['value'][1])
-            else:
-                logger.warning("Prometheus Query Failed")
-        except Exception as e:
-            logger.warning(f"Prometheus Query Failed ({e}). Returning 0.0")
+            # We explicitly set headers to mimic the curl command exactly
+            response = requests.get(
+                prometheus_url,
+                params={"query": query},
+                headers={'Accept': 'application/json'},
+                timeout=5
+            )
 
-        # TODO: properly handle failure
+            # If this fails, it will tell us why (404, 500, etc.)
+            response.raise_for_status()
+
+            data = response.json()
+            results = data.get("data", {}).get("result", [])
+
+            if results:
+                # results[0]['value'] is a list: [timestamp, "value"]
+                load_val = float(results[0]['value'][1])
+                logger.info(f"Prometheus Query Success: Load is {load_val:.4f}")
+                return load_val
+            else:
+                logger.warning(f"Prometheus returned success but empty results for: {query}")
+
+        except Exception as e:
+            # This will now print the specific error (e.g., ConnectionRefused, Timeout, etc.)
+            logger.warning(f"Prometheus Query Failed: {e}")
+
+        # Fallback to local node metrics if the cluster-wide query fails
         return self.get_virtual_memory()
 
 
