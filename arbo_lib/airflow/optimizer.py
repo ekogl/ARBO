@@ -4,6 +4,8 @@ import boto3
 from botocore.client import Config
 from typing import Optional
 import requests
+from datetime import datetime
+from urllib import parse
 
 from arbo_lib.core.estimator import ArboEstimator
 from arbo_lib.utils.logger import get_logger
@@ -16,6 +18,15 @@ class ArboOptimizer:
     """
     def __init__(self):
         self.estimator = ArboEstimator()
+
+        # TODO: check
+        self.namespace = "kogler-dev"
+        self.base_url = f"http://airflow-api-server.{self.namespace}.svc.cluster.local:8080"
+        # self.base_url = "http://localhost:8080"
+        self.username = "admin"
+        self.password = "admin"
+        self.bearer_token = None
+        self.fmt = "%Y-%m-%dT%H:%M:%S.%fZ"
 
     # TODO: handle cluster load properly
     def get_task_configs(self, task_name: str, input_quantity: float, cluster_load: float = 0.0,
@@ -54,13 +65,13 @@ class ArboOptimizer:
         return configs
 
     def report_success(
-            self, task_name: str, total_duration: float, s: int, gamma: float, cluster_load: float,
-            predicted_amdahl: float, predicted_residual: float
+            self, task_name: str, s: int, gamma: float, cluster_load: float,
+            predicted_amdahl: float, predicted_residual: float, namespace: str, dag_id: str, run_id: str,
+            target_id: str, fallback_duration: float, is_group: bool
     ) -> None:
         """
         callback after the parallel stage is done; feeds actual execution time into the DB
         :param task_name: Unique identifier for task
-        :param total_duration: actual execution time of the task
         :param s: degree of parallelism (number of workers)
         :param gamma: input scaling factor
         :param cluster_load: metric representing cluster load
@@ -68,9 +79,24 @@ class ArboOptimizer:
         :param predicted_residual: predicted residual (overhead) by the GP
         :return: None
         """
-        logger.info(f"Feedback '{task_name}': Actual={total_duration:.2f}s vs Pred={predicted_amdahl + predicted_residual:.2f}s")
+        self.namespace = namespace
+        self.bearer_token = self._get_bearer_token()
+        actual_duration = None
 
-        self.estimator.feedback(task_name, s, gamma, cluster_load, total_duration, predicted_amdahl, predicted_residual)
+        if is_group:
+            actual_duration = self._get_task_group_metrics(dag_id, run_id, target_id)
+        else:
+            result = self._get_task_duration(dag_id, run_id, target_id)
+            if result is not None:
+                actual_duration, start_up_time = result
+
+        if actual_duration is None:
+            logger.info("Failed to query data, falling back to fallback duration")
+            actual_duration = fallback_duration
+
+        logger.info(f"Feedback '{task_name}': Actual={actual_duration:.2f}s vs Pred={predicted_amdahl + predicted_residual:.2f}s")
+
+        self.estimator.feedback(task_name, s, gamma, cluster_load, actual_duration, predicted_amdahl, predicted_residual)
 
     @staticmethod
     def get_filesize(endpoint_url: str, access_key: str, secret_key: str, bucket_name: str, file_key: str) -> Optional[float]:
@@ -140,47 +166,135 @@ class ArboOptimizer:
     def get_cluster_load(self, namespace: str = "default", ) -> float:
         """
         Queries Prometheus for actual CPU utilization across the cluster.
+        :param namespace: namespace of the Prometheus instance
+        :return:
         """
-        # We use port 80 based on your 'kubectl get svc' output
-        # Some environments prefer the shorter FQDN if the long one fails
         prometheus_url = f"http://prometheus-server.{namespace}.svc.cluster.local/api/v1/query"
-
-        # Exact PromQL syntax: Use single quotes for the python string
-        # and double quotes for the PromQL labels
         query = '1 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m]))'
 
         try:
-            # We explicitly set headers to mimic the curl command exactly
-            response = requests.get(
-                prometheus_url,
-                params={"query": query},
-                headers={'Accept': 'application/json'},
-                timeout=5
-            )
-
-            # If this fails, it will tell us why (404, 500, etc.)
-            response.raise_for_status()
-
-            data = response.json()
-            results = data.get("data", {}).get("result", [])
-
+            response = requests.get(prometheus_url, params={"query": query}, timeout=5)
+            results = response.json()["data"]["result"]
             if results:
-                # results[0]['value'] is a list: [timestamp, "value"]
-                load_val = float(results[0]['value'][1])
-                logger.info(f"Prometheus Query Success: Load is {load_val:.4f}")
-                return load_val
+                logger.info(f"Prometheus Query Success: CPU Utilization is {results[0]['value'][1]}")
+                return float(results[0]['value'][1])
             else:
-                logger.warning(f"Prometheus returned success but empty results for: {query}")
-
+                logger.warning("Prometheus Query Failed")
         except Exception as e:
-            # This will now print the specific error (e.g., ConnectionRefused, Timeout, etc.)
-            logger.warning(f"Prometheus Query Failed: {e}")
+            logger.warning(f"Prometheus Query Failed ({e})")
 
-        # Fallback to local node metrics if the cluster-wide query fails
+        # TODO: properly handle failure
         return self.get_virtual_memory()
 
+    def _get_task_duration(self, dag_id: str, dag_run_id: str, task_id: str) -> Optional[tuple[float, float]]:
+        """
+        Retrieve the duration and startup time of a specific task instance in a DAG run.
 
-    # TODO: function to get execution time of task
+        This method fetches task instance data from an external API and computes the
+        task's duration and startup time in seconds. The startup time is determined
+        as the difference between when the task was queued and when it started.
+
+        :param dag_id: The unique identifier of the DAG.
+        :param dag_run_id: The unique identifier of the DAG run.
+        :param task_id: The unique identifier of the task within the DAG.
+        :return: A tuple containing the task duration (in seconds) and startup time
+                 (in seconds) or None if the request fails.
+        """
+        safe_run_id = parse.quote(dag_run_id)
+        headers = {
+            "Authorization": f"Bearer {self.bearer_token}",
+            "Content-Type": "application/json"
+        }
+        url = f"{self.base_url}/api/v2/dags/{dag_id}/dagRuns/{safe_run_id}/taskInstances/{task_id}"
+
+        try:
+            response = requests.get(url, headers=headers, timeout=5)
+            response.raise_for_status()
+        except Exception as e:
+            logger.warning(f"Failed to get task duration ({e})")
+            return None
+
+        data = response.json()
+        duration = data.get("duration")
+        queued = datetime.strptime(data.get('queued_when'), self.fmt)
+        start = datetime.strptime(data.get('start_date'), self.fmt)
+
+        # TODO: properly handle start_up time to update task_model
+        startup_time = (start - queued).total_seconds()
+
+        if duration is None or startup_time is None:
+            logger.warning("Failed to compute task duration or startup time")
+            return None
+
+        logger.info(f"Task Duration: {duration:.2f}s, Startup Time: {startup_time:.2f}s")
+        return duration, startup_time
+
+    def _get_task_group_metrics(self, dag_id: str, dag_run_id: str, group_id: str):
+        safe_run_id = parse.quote(dag_run_id)
+        headers = {
+            "Authorization": f"Bearer {self.bearer_token}",
+            "Content-Type": "application/json"
+        }
+
+        # request to group endpoint
+        url = f"{self.base_url}/api/v2/dags/{dag_id}/dagRuns/{safe_run_id}/taskInstances"
+
+        try:
+            response = requests.get(url, headers=headers, timeout=5)
+            response.raise_for_status()
+            all_tasks = response.json().get("task_instances", [])
+
+            # Filter for tasks belonging to group
+            group_tasks = [
+                t for t in all_tasks
+                if t['task_id'] == group_id or t['task_id'].startswith(f"{group_id}.")
+            ]
+
+            if not group_tasks:
+                logger.warning(f"No tasks found for group: {group_id}")
+                return None
+
+            start_times = [datetime.strptime(t['start_date'], self.fmt) for t in group_tasks if t.get('start_date')]
+            end_times = [datetime.strptime(t['end_date'], self.fmt) for t in group_tasks if t.get('end_date')]
+
+            if not start_times or not end_times:
+                logger.warning("Group hasn't finished yet or tasks have no timing data.")
+                return None
+
+            group_start = min(start_times)
+            group_end = max(end_times)
+            total_duration = (group_end - group_start).total_seconds()
+
+            logger.info(f"\n--- Task Group: {group_id} ---")
+            logger.info(f"Total Tasks in Group: {len(group_tasks)}")
+            logger.info(f"Group Start:          {group_start}")
+            logger.info(f"Group End:            {group_end}")
+            logger.info(f"Total Wall Duration:  {total_duration:.4f}s")
+
+            return total_duration
+
+        except Exception as e:
+            logger.error(f"Failed to get group metrics ({e})")
+            return None
+
+    def _get_bearer_token(self) -> Optional[str]:
+        """
+        Gets bearer token for Airflow API
+        :return: bearer token, None if authentication failed
+        """
+        auth_url = f"{self.base_url}/auth/token"
+        payload = {
+            "username": self.username,
+            "password": self.password
+        }
+        try:
+            response = requests.post(auth_url, json=payload, timeout=5)
+            response.raise_for_status()
+            return response.json().get("access_token")
+        except Exception as e:
+            logger.warning(f"Authentication Failed ({e})")
+            return None
+
 
     @staticmethod
     def get_virtual_memory() -> float:
