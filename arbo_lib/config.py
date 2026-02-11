@@ -8,4 +8,7 @@ class Config:
     DB_USER = os.getenv("ARBO_DB_USER", "arbo_user")
     DB_PASS = os.getenv("ARBO_DB_PASS", "arbo_pass")
 
+    AIRFLOW_USER = os.getenv("AIRFLOW_USER", "admin")
+    AIRFLOW_PASS = os.getenv("AIRFLOW_PASS", "admin")
+
     DEFAULT_STARTUP = 6.0

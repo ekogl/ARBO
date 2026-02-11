@@ -1,13 +1,14 @@
 from typing import List, Dict
 import psutil
 import boto3
-from botocore.client import Config
+from botocore.client import Config as botoConfig
 from typing import Optional
 import requests
 from datetime import datetime
 from urllib import parse
 
 from arbo_lib.core.estimator import ArboEstimator
+from arbo_lib.config import Config
 from arbo_lib.utils.logger import get_logger
 
 logger = get_logger("arbo.optimizer")
@@ -16,19 +17,20 @@ class ArboOptimizer:
     """
     Main entry point for Airflow DAGs; wraps estimator for easier usage
     """
-    def __init__(self):
+    def __init__(self, namespace: str, is_local: bool = False):
         self.estimator = ArboEstimator()
 
-        # TODO: check
-        self.namespace = "kogler-dev"
-        self.base_url = f"http://airflow-api-server.{self.namespace}.svc.cluster.local:8080"
-        # self.base_url = "http://localhost:8080"
-        self.username = "admin"
-        self.password = "admin"
+        if is_local:
+            self.base_url = "http://localhost:8080"
+        else:
+            self.base_url = f"http://airflow-api-server.{self.namespace}.svc.cluster.local:8080"
+
+        self.namespace = namespace
+        self.username = Config.AIRFLOW_USER
+        self.password = Config.AIRFLOW_PASS
         self.bearer_token = None
         self.fmt = "%Y-%m-%dT%H:%M:%S.%fZ"
 
-    # TODO: handle cluster load properly
     def get_task_configs(self, task_name: str, input_quantity: float, cluster_load: float = 0.0,
                          max_time_slo: float = None
                          ) -> List[Dict]:
@@ -66,7 +68,7 @@ class ArboOptimizer:
 
     def report_success(
             self, task_name: str, s: int, gamma: float, cluster_load: float,
-            predicted_amdahl: float, predicted_residual: float, namespace: str, dag_id: str, run_id: str,
+            predicted_amdahl: float, predicted_residual: float, dag_id: str, run_id: str,
             target_id: str, fallback_duration: float, is_group: bool
     ) -> None:
         """
@@ -77,9 +79,13 @@ class ArboOptimizer:
         :param cluster_load: metric representing cluster load
         :param predicted_amdahl: predicted execution time based on Amdahl's Law
         :param predicted_residual: predicted residual (overhead) by the GP
+        :param dag_id: DAG ID
+        :param run_id: DAG run ID
+        :param target_id: Task ID or Task Group ID
+        :param fallback_duration: fallback duration in case of failure
+        :param is_group: True if the target is a task group, False otherwise
         :return: None
         """
-        self.namespace = namespace
         self.bearer_token = self._get_bearer_token()
         actual_duration = None
 
@@ -88,6 +94,7 @@ class ArboOptimizer:
         else:
             result = self._get_task_duration(dag_id, run_id, target_id)
             if result is not None:
+                # TODO: properly handle start_up_time
                 actual_duration, start_up_time = result
 
         if actual_duration is None:
@@ -115,7 +122,7 @@ class ArboOptimizer:
                 endpoint_url=endpoint_url,
                 aws_access_key_id=access_key,
                 aws_secret_access_key=secret_key,
-                config=Config(signature_version='s3v4')
+                config=botoConfig(signature_version='s3v4')
             )
             obj = s3.head_object(Bucket=bucket_name, Key=file_key)
             input_quantity = obj["ContentLength"]
@@ -143,7 +150,7 @@ class ArboOptimizer:
                 endpoint_url=endpoint_url,
                 aws_access_key_id=access_key,
                 aws_secret_access_key=secret_key,
-                config=Config(signature_version='s3v4')
+                config=botoConfig(signature_version='s3v4')
             )
             paginator = s3.get_paginator("list_objects_v2")
 
@@ -162,7 +169,6 @@ class ArboOptimizer:
 
 
 
-    # TODO: function to get cluster load
     def get_cluster_load(self, namespace: str = "default", ) -> float:
         """
         Queries Prometheus for actual CPU utilization across the cluster.
@@ -190,10 +196,6 @@ class ArboOptimizer:
         """
         Retrieve the duration and startup time of a specific task instance in a DAG run.
 
-        This method fetches task instance data from an external API and computes the
-        task's duration and startup time in seconds. The startup time is determined
-        as the difference between when the task was queued and when it started.
-
         :param dag_id: The unique identifier of the DAG.
         :param dag_run_id: The unique identifier of the DAG run.
         :param task_id: The unique identifier of the task within the DAG.
@@ -218,18 +220,32 @@ class ArboOptimizer:
         duration = data.get("duration")
         queued = datetime.strptime(data.get('queued_when'), self.fmt)
         start = datetime.strptime(data.get('start_date'), self.fmt)
+        end = datetime.strptime(data.get('end_date'), self.fmt)
 
-        # TODO: properly handle start_up time to update task_model
         startup_time = (start - queued).total_seconds()
 
         if duration is None or startup_time is None:
             logger.warning("Failed to compute task duration or startup time")
             return None
 
-        logger.info(f"Task Duration: {duration:.2f}s, Startup Time: {startup_time:.2f}s")
+        logger.info(f"\n--- Task: {task_id} ---")
+        logger.info(f"Task Start:          {start}")
+        logger.info(f"Task End:            {end}")
+        logger.info(f"Total Wall Duration:  {duration:.4f}s")
+        logger.info(f"Startup Time:         {startup_time:.4f}s")
+
         return duration, startup_time
 
-    def _get_task_group_metrics(self, dag_id: str, dag_run_id: str, group_id: str):
+    def _get_task_group_metrics(self, dag_id: str, dag_run_id: str, group_id: str) -> Optional[float]:
+        """
+        Retrieves and calculates metrics for a specific task group within a DAG run.
+
+        :param dag_id: The unique identifier of the DAG.
+        :param dag_run_id: The unique identifier of the DAG run.
+        :param group_id: The unique identifier of the task group whose metrics are to be retrieved.
+        :return: The total wall-clock duration (in seconds) for all tasks in the specified group or None
+            if no tasks are found for the group or if sufficient timing data is not available.
+        """
         safe_run_id = parse.quote(dag_run_id)
         headers = {
             "Authorization": f"Bearer {self.bearer_token}",
