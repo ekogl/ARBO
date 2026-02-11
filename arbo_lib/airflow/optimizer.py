@@ -20,12 +20,13 @@ class ArboOptimizer:
     def __init__(self, namespace: str, is_local: bool = False):
         self.estimator = ArboEstimator()
 
+        self.namespace = namespace
+
         if is_local:
             self.base_url = "http://localhost:8080"
         else:
             self.base_url = f"http://airflow-api-server.{self.namespace}.svc.cluster.local:8080"
 
-        self.namespace = namespace
         self.username = Config.AIRFLOW_USER
         self.password = Config.AIRFLOW_PASS
         self.bearer_token = None
