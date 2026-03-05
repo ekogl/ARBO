@@ -7,6 +7,7 @@ from arbo_lib.core.amdahl import AmdahlUtils
 from arbo_lib.core.residual import ResidualModel
 from arbo_lib.core.exceptions import TaskNotFoundError, TaskAlreadyExistsError, StaleDataError
 from arbo_lib.utils.logger import get_logger
+from arbo_lib.config import Config
 
 logger = get_logger("arbo.estimator")
 
@@ -43,7 +44,7 @@ class ArboEstimator:
             # TODO: make s adjustible via config
             history = self.store.get_history(task_name, limit=10)  # limit is never actually reached
             self.residual_model.train(history)
-            residuals = self.residual_model.predict(np.array([5]), gamma, cluster_load)
+            residuals_mean, residuals_std = self.residual_model.predict(np.array([5]), gamma, cluster_load)
             predicted_amdahl = AmdahlUtils.calculate_theoretical_time(
                 s=5,
                 t_base=params["t_base_1"],
@@ -53,13 +54,12 @@ class ArboEstimator:
                 k=params["k_exponent"]
             )
             logger.info(f"Calibration run for '{task_name}'; forcing s=5")
-            return 5, gamma, predicted_amdahl, float(self._sanitize_float(residuals[0]))
+            return 5, gamma, predicted_amdahl, float(self._sanitize_float(residuals_mean[0]))
 
         # train GP on last 50 executions
         history = self.store.get_history(task_name, limit=50)
         self.residual_model.train(history)
 
-        # TODO: maybe scale max_s to make sure  -- currently threshold is too low
         max_s = self._find_search_space(params["p_obs"])
         best_s = 1
         best_score = float("inf")
@@ -71,7 +71,11 @@ class ArboEstimator:
 
         logger.info(f"Searching for optimal s in range [{1}, {max_s*1.5}]")
 
-        residuals = self.residual_model.predict(candidates_s, gamma, cluster_load)
+        residuals_mean, residuals_std = self.residual_model.predict(candidates_s, gamma, cluster_load)
+
+        # bayesian exploration parameter
+        kappa = float(Config.KAPPA)
+        logger.info(f"Using kappa={kappa}")
 
         for i, s in enumerate(candidates_s):
             # calculate theoretical time
@@ -80,19 +84,22 @@ class ArboEstimator:
                 gamma=gamma, p=params["p_obs"], k=params["k_exponent"]
             )
 
-            t_total = t_amdahl + residuals[i]
+            mu_total = t_amdahl + residuals_mean[i]
+            sigma_total = residuals_std[i]
 
             # time constraint
-            if max_time_slo and t_total > max_time_slo:
+            if max_time_slo and mu_total > max_time_slo:
                 continue
 
-            cost = self._cost_function(t_total, s)
+            t_acq = mu_total + (kappa * sigma_total)
+
+            cost = self._cost_function(t_acq, s)
 
             if cost < best_score:
                 best_score = cost
                 best_s = s
                 predicted_amdahl = self._sanitize_float(t_amdahl)
-                predicted_residual = self._sanitize_float(residuals[i])
+                predicted_residual = self._sanitize_float(residuals_mean[i])
 
 
         return int(best_s), gamma, predicted_amdahl, predicted_residual
@@ -100,7 +107,7 @@ class ArboEstimator:
 
     def feedback(
             self, task_name: str, s: int, gamma: float, cluster_load: float, t_actual: float,
-            predicted_amdahl: float, predicted_residual: float
+            predicted_amdahl: float, predicted_residual: float, dynamic_c_startup: float
     ) -> None:
         """
         Learning loop: updates parameters and saves execution
@@ -111,6 +118,7 @@ class ArboEstimator:
         :param t_actual: actual execution time of the task
         :param predicted_amdahl: predicted execution time based on Amdahl's Law
         :param predicted_residual: predicted residual (overhead) by the GP
+        :param dynamic_c_startup: dynamic startup time constant
         :return: None
         """
 
@@ -119,6 +127,8 @@ class ArboEstimator:
         for attempt in range(max_retries):
             try:
                 params = self.store.get_task_model(task_name)
+
+                c_startup_used = dynamic_c_startup if dynamic_c_startup > 0 else params["c_startup"]
 
                 current_version = params["sample_count"] if params else 0
 
@@ -148,7 +158,7 @@ class ArboEstimator:
                 p_current = AmdahlUtils.calculate_current_p(
                     s=s,
                     t_actual=t_actual,
-                    c_startup=params["c_startup"],
+                    c_startup=c_startup_used,
                     t_base=params["t_base_1"],
                     gamma=gamma,
                     k=current_k
@@ -165,7 +175,7 @@ class ArboEstimator:
                     s=s,
                     t_base=params["t_base_1"],
                     t_actual=t_actual,
-                    c_startup=params["c_startup"],
+                    c_startup=c_startup_used,
                     gamma=gamma,
                     p=new_p
                 )
@@ -181,7 +191,7 @@ class ArboEstimator:
                 t_theory = AmdahlUtils.calculate_theoretical_time(
                     s=s,
                     t_base=params["t_base_1"],
-                    c_startup=params["c_startup"],
+                    c_startup=c_startup_used,
                     gamma=gamma,
                     p=new_p,
                     k=new_k
@@ -232,7 +242,7 @@ class ArboEstimator:
 
         limit = ceil(p / (1-p))
 
-        return max(limit, 15)  # search up to at least 15 workers
+        return max(limit, 10)  # search up to at least 15 workers
 
     @staticmethod
     def _sanitize_float(x: float) -> float:

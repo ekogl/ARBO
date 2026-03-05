@@ -91,20 +91,27 @@ class ArboOptimizer:
         actual_duration = None
 
         if is_group:
-            actual_duration = self._get_task_group_metrics(dag_id, run_id, target_id)
+            result = self._get_task_group_metrics(dag_id, run_id, target_id)
         else:
             result = self._get_task_duration(dag_id, run_id, target_id)
-            if result is not None:
-                # TODO: properly handle start_up_time
-                actual_duration, start_up_time = result
 
-        if actual_duration is None:
+        if result is not None:
+            actual_duration, start_up_time = result
+
+            if is_group:
+                pure_execution_duration = actual_duration - start_up_time
+            else:
+                pure_execution_duration = actual_duration
+        else:
             logger.info("Failed to query data, falling back to fallback duration")
-            actual_duration = fallback_duration
+            pure_execution_duration = fallback_duration
+            start_up_time = 0.0
 
-        logger.info(f"Feedback '{task_name}': Actual={actual_duration:.2f}s vs Pred={predicted_amdahl + predicted_residual:.2f}s")
 
-        self.estimator.feedback(task_name, s, gamma, cluster_load, actual_duration, predicted_amdahl, predicted_residual)
+
+        logger.info(f"Feedback '{task_name}': Exec={pure_execution_duration:.2f}s (K8s Overhead={start_up_time:.2f}s) vs Pred={predicted_amdahl + predicted_residual:.2f}s")
+
+        self.estimator.feedback(task_name, s, gamma, cluster_load, actual_duration, predicted_amdahl, predicted_residual, start_up_time)
 
     @staticmethod
     def get_filesize(endpoint_url: str, access_key: str, secret_key: str, bucket_name: str, file_key: str) -> Optional[float]:
@@ -193,6 +200,10 @@ class ArboOptimizer:
         # TODO: properly handle failure
         return self.get_virtual_memory()
 
+    @staticmethod
+    def _parse_iso(dt_str: str) -> datetime:
+        return datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
+
     def _get_task_duration(self, dag_id: str, dag_run_id: str, task_id: str) -> Optional[tuple[float, float]]:
         """
         Retrieve the duration and startup time of a specific task instance in a DAG run.
@@ -219,9 +230,9 @@ class ArboOptimizer:
 
         data = response.json()
         duration = data.get("duration")
-        queued = datetime.strptime(data.get('queued_when'), self.fmt)
-        start = datetime.strptime(data.get('start_date'), self.fmt)
-        end = datetime.strptime(data.get('end_date'), self.fmt)
+        queued = self._parse_iso(data.get('queued_when'))
+        start = self._parse_iso(data.get('start_date'))
+        end = self._parse_iso(data.get('end_date'))
 
         startup_time = (start - queued).total_seconds()
 
@@ -237,7 +248,7 @@ class ArboOptimizer:
 
         return duration, startup_time
 
-    def _get_task_group_metrics(self, dag_id: str, dag_run_id: str, group_id: str) -> Optional[float]:
+    def _get_task_group_metrics(self, dag_id: str, dag_run_id: str, group_id: str) -> Optional[tuple[float, float]]:
         """
         Retrieves and calculates metrics for a specific task group within a DAG run.
 
@@ -254,10 +265,11 @@ class ArboOptimizer:
         }
 
         # request to group endpoint
+        params = {"limit": 200}
         url = f"{self.base_url}/api/v2/dags/{dag_id}/dagRuns/{safe_run_id}/taskInstances"
 
         try:
-            response = requests.get(url, headers=headers, timeout=5)
+            response = requests.get(url, headers=headers, timeout=5, params=params)
             response.raise_for_status()
             all_tasks = response.json().get("task_instances", [])
 
@@ -271,24 +283,43 @@ class ArboOptimizer:
                 logger.warning(f"No tasks found for group: {group_id}")
                 return None
 
-            start_times = [datetime.strptime(t['start_date'], self.fmt) for t in group_tasks if t.get('start_date')]
-            end_times = [datetime.strptime(t['end_date'], self.fmt) for t in group_tasks if t.get('end_date')]
+            queued_times = [self._parse_iso(t['queued_when']) for t in group_tasks if t.get('queued_when')]
+            end_times = [self._parse_iso(t['end_date']) for t in group_tasks if t.get('end_date')]
 
-            if not start_times or not end_times:
+            if not queued_times or not end_times:
                 logger.warning("Group hasn't finished yet or tasks have no timing data.")
                 return None
 
-            group_start = min(start_times)
+            # calculate total wall duration (earliest queue to lastest end)
+            group_queued = min(queued_times)
             group_end = max(end_times)
-            total_duration = (group_end - group_start).total_seconds()
+            total_wall_duration = (group_end - group_queued).total_seconds()
+
+            # calculate cumulative startup overhead
+            map_index_startups = {}
+            for t in group_tasks:
+                if t.get('start_date') and t.get('queued_when'):
+                    start = self._parse_iso(t['start_date'])
+                    queued = self._parse_iso(t['queued_when'])
+                    startup_delay = (start - queued).total_seconds()
+
+                    mi = t.get('map_index', -1)
+                    map_index_startups[mi] = map_index_startups.get(mi, 0.0) + startup_delay
+
+            # average cumulative startup overhead across mapped instances
+            if map_index_startups:
+                avg_group_startup_time = sum(map_index_startups.values()) / len(map_index_startups)
+            else:
+                avg_group_startup_time = 0.0
 
             logger.info(f"\n--- Task Group: {group_id} ---")
             logger.info(f"Total Tasks in Group: {len(group_tasks)}")
-            logger.info(f"Group Start:          {group_start}")
+            logger.info(f"Group Queued:          {group_queued}")
             logger.info(f"Group End:            {group_end}")
-            logger.info(f"Total Wall Duration:  {total_duration:.4f}s")
+            logger.info(f"Total Wall Duration:  {total_wall_duration:.4f}s")
+            logger.info(f"Average Startup Time:  {avg_group_startup_time:.4f}s")
 
-            return total_duration
+            return total_wall_duration, avg_group_startup_time
 
         except Exception as e:
             logger.error(f"Failed to get group metrics ({e})")

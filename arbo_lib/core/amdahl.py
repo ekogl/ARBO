@@ -1,6 +1,10 @@
 import numpy as np
 from typing import Optional
 
+from arbo_lib.utils.logger import get_logger
+
+logger = get_logger("arbo.amdahl")
+
 
 class AmdahlUtils:
 
@@ -16,16 +20,20 @@ class AmdahlUtils:
         :param k: exponent for the scaling factor
         :return: theoretical execution time
         """
+
+        logger.info(f"calculate_theoretical_time called with c_startup={c_startup:.4f}s (s={s}, gamma={gamma:.2f})")
+
         if s < 1:
             s = 1
 
         scaling_factor = gamma ** k
-        amdahl_part = (1 - p) * t_base + (p/s) * t_base
+        amdahl_part = (1 - p) * t_base + (p / s) * t_base
 
         return c_startup + (scaling_factor * amdahl_part)
 
     @staticmethod
-    def calculate_current_p(s: float, t_actual: float, c_startup: float, t_base: float, gamma: float, k:float) -> Optional[float]:
+    def calculate_current_p(s: float, t_actual: float, c_startup: float, t_base: float, gamma: float, k: float) -> \
+    Optional[float]:
         """
         Infer observed 'p' from a single execution in comparison to baseline time.
         :param s: degree of parallelism
@@ -36,6 +44,9 @@ class AmdahlUtils:
         :param k: exponent for the scaling factor
         :return: inferred p or None if not possible
         """
+
+        logger.info(f"Inferring 'p' using c_startup={c_startup:.4f}s (t_actual={t_actual:.2f}s)")
+
         if s <= 1 or t_base <= 0:
             return None
 
@@ -52,7 +63,8 @@ class AmdahlUtils:
         return max(0.01, min(0.99, p_calc))  # clamp to [0.01, 0.99]
 
     @staticmethod
-    def calculate_current_k(s: int, t_actual: float, c_startup: float, t_base: float, gamma: float, p: float) -> Optional[float]:
+    def calculate_current_k(s: int, t_actual: float, c_startup: float, t_base: float, gamma: float, p: float) -> \
+    Optional[float]:
         """
         Infer observed 'k' from a single execution
         :param s: degree of parallelism
@@ -63,6 +75,9 @@ class AmdahlUtils:
         :param p: parallelizable part of the task
         :return:
         """
+
+        logger.info(f"Inferring 'k' using c_startup={c_startup:.4f}s (t_actual={t_actual:.2f}s)")
+
         if 0.99 <= gamma <= 1.01:  # input scale has not changed significantly
             return None
 
@@ -73,13 +88,13 @@ class AmdahlUtils:
         if theoretical_base_at_s <= 0:
             return None
 
-        ration = pure_time / theoretical_base_at_s
+        ratio = pure_time / theoretical_base_at_s
 
-        if ration <= 0:
+        if ratio <= 0:
             return None
 
         try:
-            k_calc = np.log(ration) / np.log(gamma)
+            k_calc = np.log(ratio) / np.log(gamma)
             return max(0.5, min(3.0, k_calc))  # clamp to square root and cubic complexity
         except ZeroDivisionError:
             return None
@@ -98,4 +113,3 @@ class AmdahlUtils:
 
         return alpha * old_val + (1 - alpha) * current_val
 
-    
