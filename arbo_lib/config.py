@@ -11,4 +11,7 @@ class Config:
     AIRFLOW_USER = os.getenv("AIRFLOW_USER", "admin")
     AIRFLOW_PASS = os.getenv("AIRFLOW_PASS", "admin")
 
+    # TODO: might need to cast
+    KAPPA = os.getenv("KAPPA", 1.0)
+
     DEFAULT_STARTUP = 6.0

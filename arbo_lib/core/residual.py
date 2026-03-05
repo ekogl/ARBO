@@ -1,7 +1,7 @@
 import numpy as np
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import WhiteKernel, Matern, ConstantKernel as C
-from typing import List, Dict
+from typing import List, Dict, Tuple
 
 class ResidualModel:
     """
@@ -41,7 +41,7 @@ class ResidualModel:
         self.model.fit(np.array(X), np.array(y))
         self.is_trained = True
 
-    def predict(self, s_candidates: np.ndarray, gamma: float, cluster_load: float) -> np.ndarray:
+    def predict(self, s_candidates: np.ndarray, gamma: float, cluster_load: float) -> Tuple[np.ndarray, np.ndarray]:
         """
         Predicts residual for a list of candiate 's' values
         :param s_candidates: list of candidate s values
@@ -50,7 +50,8 @@ class ResidualModel:
         :return: predicted residuals
         """
         if not self.is_trained:
-            return np.zeros(len(s_candidates))  # if no history, assume zero residuals
+            zeros = np.zeros(len(s_candidates))
+            return zeros, zeros  # if no history, assume zero residuals
 
         X_pred = np.column_stack([
             s_candidates,
@@ -58,5 +59,5 @@ class ResidualModel:
             np.full(len(s_candidates), cluster_load)
         ])
 
-        return self.model.predict(X_pred)
+        return self.model.predict(X_pred, return_std=True)
 
