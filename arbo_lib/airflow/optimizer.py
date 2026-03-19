@@ -328,6 +328,7 @@ class ArboOptimizer:
             try:
                 prom_resp = requests.get(prometheus_url, params={"query": prom_query}, timeout=10)
                 prom_resp.raise_for_status()
+                logger.info(f"Prometheus Resp: {prom_resp}")
                 results = prom_resp.json().get("data", {}).get("result", [])
 
                 logger.info(f"Raw Prometheus Results: {results}")
