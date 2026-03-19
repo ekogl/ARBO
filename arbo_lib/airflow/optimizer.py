@@ -308,10 +308,10 @@ class ArboOptimizer:
             sanitized_group_prefix = re.sub(r'[^a-zA-Z0-9]', '.*', group_id)
             prometheus_url = f"http://prometheus-server.{self.namespace}.svc.cluster.local/api/v1/query"
             prom_query = (
-                f'(kube_pod_container_state_started{{namespace="{self.namespace}", container="base"}} '
-                f' - kube_pod_created{{namespace="{self.namespace}"}}) '
+                f'(max_over_time(kube_pod_container_state_started{{namespace="{self.namespace}", container="base"}}[1h]) '
+                f' - max_over_time(kube_pod_created{{namespace="{self.namespace}"}}[1h])) '
                 f'* on(pod, namespace) group_left(label_dag_id, label_task_id, label_run_id, label_map_index) '
-                f'kube_pod_labels{{namespace="{self.namespace}", label_dag_id="{dag_id}", label_task_id=~"{sanitized_group_prefix}.*"}}'
+                f'max_over_time(kube_pod_labels{{namespace="{self.namespace}", label_dag_id="{dag_id}", label_task_id=~"{sanitized_group_prefix}.*"}}[1h])'
             )
 
             k8s_overheads = {}
