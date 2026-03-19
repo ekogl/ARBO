@@ -307,10 +307,14 @@ class ArboOptimizer:
             # Sanitize group_id for Prometheus label matching (dots/underscores often become dashes)
             sanitized_group_prefix = re.sub(r'[^a-zA-Z0-9]', '.*', group_id)
             prometheus_url = f"http://prometheus-server.{self.namespace}.svc.cluster.local/api/v1/query"
+
             prom_query = (
-                f'(max_over_time(kube_pod_container_state_started{{namespace="{self.namespace}", container="base"}}[1h]) '
-                f' - ignoring(container) max_over_time(kube_pod_created{{namespace="{self.namespace}"}}[1h])) '
-                f'* on(pod, namespace) group_left(label_dag_id, label_task_id, label_run_id, label_map_index) '
+                f'('
+                f'max_over_time(kube_pod_start_time{{namespace="{self.namespace}"}}[1h])'
+                f' - on(pod, namespace) '
+                f'max_over_time(kube_pod_created{{namespace="{self.namespace}"}}[1h])'
+                f')'
+                f' * on(pod, namespace) group_left(label_dag_id, label_task_id, label_run_id, label_map_index) '
                 f'max_over_time(kube_pod_labels{{namespace="{self.namespace}", label_dag_id="{dag_id}", label_task_id=~"{sanitized_group_prefix}.*"}}[1h])'
             )
 
