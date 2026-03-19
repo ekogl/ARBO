@@ -309,7 +309,7 @@ class ArboOptimizer:
             prometheus_url = f"http://prometheus-server.{self.namespace}.svc.cluster.local/api/v1/query"
             prom_query = (
                 f'(max_over_time(kube_pod_container_state_started{{namespace="{self.namespace}", container="base"}}[1h]) '
-                f' - max_over_time(kube_pod_created{{namespace="{self.namespace}"}}[1h])) '
+                f' - ignoring(container) max_over_time(kube_pod_created{{namespace="{self.namespace}"}}[1h])) '
                 f'* on(pod, namespace) group_left(label_dag_id, label_task_id, label_run_id, label_map_index) '
                 f'max_over_time(kube_pod_labels{{namespace="{self.namespace}", label_dag_id="{dag_id}", label_task_id=~"{sanitized_group_prefix}.*"}}[1h])'
             )
@@ -319,6 +319,9 @@ class ArboOptimizer:
                 prom_resp = requests.get(prometheus_url, params={"query": prom_query}, timeout=10)
                 prom_resp.raise_for_status()
                 results = prom_resp.json().get("data", {}).get("result", [])
+
+                logger.info(f"Raw Prometheus Results: {results}")
+
                 for r in results:
                     metric = r.get("metric", {})
                     pod_run_id = metric.get("label_run_id")
