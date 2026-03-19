@@ -202,14 +202,20 @@ class ArboOptimizer:
 
         try:
             response = requests.get(prometheus_url, params={"query": query}, timeout=5)
-            results = response.json()["data"]["result"]
+            response.raise_for_status()
+            data = response.json()
+            results = data.get("data", {}).get("result", [])
             if results:
                 logger.info(f"Prometheus Query Success: CPU Utilization is {results[0]['value'][1]}")
                 return float(results[0]['value'][1])
             else:
-                logger.warning("Prometheus Query Failed")
+                logger.warning("Prometheus Query Succeeded but no results found.")
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Prometheus HTTP Request Failed: {e}")
+        except (KeyError, IndexError, ValueError) as e:
+            logger.warning(f"Failed to parse Prometheus response: {e}")
         except Exception as e:
-            logger.warning(f"Prometheus Query Failed ({e})")
+            logger.warning(f"Unexpected error querying Prometheus: {e}")
 
         # TODO: properly handle failure
         return self.get_virtual_memory()
