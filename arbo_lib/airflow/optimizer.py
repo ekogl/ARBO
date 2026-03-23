@@ -414,8 +414,8 @@ class ArboOptimizer:
 
         lifecycle: Dict[str, float] = {}
 
-        for event in items:
-            reason = enve["reason"]
+        for event in events.items:
+            reason = event.reason
 
             dt = event.first_timestamp or event.event_time
             if not dt:
@@ -434,7 +434,7 @@ class ArboOptimizer:
                 lifecycle["pulled"] = ts
 
                 # try to read pull duration from message
-                msg = event.get("message", "")
+                msg = event.message or ""
                 match = re.search(r'in ([\d.]+)(ms|s)', msg)
                 if match:
                     try:
