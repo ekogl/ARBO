@@ -10,6 +10,7 @@ import json
 import re
 import subprocess
 from kubernetes import client, config
+from collections import defaultdict
 from kubernetes.client.exceptions import ApiException
 
 from arbo_lib.core.estimator import ArboEstimator
@@ -307,7 +308,7 @@ class ArboOptimizer:
         # for each task resolve name and retrieve lifecycle
         logger.info(f"\n--- Group Metrics for {group_id} ---")
 
-        map_index_startups: Dict[int, float] = {}
+        map_index_startups: Dict[int, float] = defaultdict(float)
 
         for t in group_tasks:
             if not (t.get("start_date") and t.get("end_date")):
@@ -339,10 +340,10 @@ class ArboOptimizer:
                     logger.warning(f"Pod {pod_name} has no lifecycle events. Falling back to only Airflow delay.")
 
             else:
-                logger.warning("Could not resolve pod name for task. Falling back to only Airflow delay.")
+                logger.warning(f"Could not resolve pod name for task {task_id}. Falling back to only Airflow delay.")
 
             total_task_startup = airflow_delay + k8s_startup
-            map_index_startups[mi] = total_task_startup
+            map_index_startups[mi] += total_task_startup
 
             logger.info(f"Task: {task_id} AF delay: {airflow_delay:.2f}s, K8s Startup: {k8s_startup:.2f}s, Pod Pull: {pull_time:.2f}s")
 
