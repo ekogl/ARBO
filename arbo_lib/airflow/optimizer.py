@@ -9,6 +9,8 @@ from urllib import parse
 import json
 import re
 import subprocess
+from kubernetes import client, config
+from kubernetes.client.exceptions import ApiException
 
 from arbo_lib.core.estimator import ArboEstimator
 from arbo_lib.config import Config
@@ -395,47 +397,31 @@ class ArboOptimizer:
     def _get_pod_lifecycle_events(self, pod_name: str) -> Dict[str, float]:
         """Query kubectl for pod's lifecycle events"""
         try:
-            results = subprocess.run(
-                [
-                    "kubectl", "get", "events", "-n", self.namespace, "--field-selector",
-                    f"involvedObject.name={pod_name}", "-o", "json",
-                ],
-                capture_output=True, text=True, timeout=15
-            )
-        except FileNotFoundError:
-            logger.warning("kubectl command not found")
-            return {}
-        except subprocess.TimeoutExpired:
-            logger.warning("kubectl command timed out")
+            try:
+                config.load_incluster_config()
+            except config.config_exception.ConfigException:
+                config.load_kube_config()
+
+            v1 = client.CoreV1Api()
+
+            events = v1.list_namespaced_event(namespace=self.namespace, field_selector=f"involvedObject.name={pod_name}")
+        except ApiException as e:
+            logger.warning(f"Kubernetes API Exception when querying events: {e}")
             return {}
         except Exception as e:
-            logger.warning(f"Failed to query kubectl for pod lifecycle events ({e})")
-            return {}
-
-        if results.returncode != 0:
-            logger.warning(f"kubectl command failed with exit code {results.returncode}")
-            return {}
-
-        try:
-            items = json.loads(results.stdout).get("items", [])
-        except json.JSONDecodeError:
-            logger.warning("Invalid JSON output from kubectl")
+            logger.warning(f"Unexpected error when configuring Kubernetes client: {e}")
             return {}
 
         lifecycle: Dict[str, float] = {}
 
         for event in items:
-            reason = event.get("reason", "")
+            reason = enve["reason"]
 
-            ts_str = event.get("firstTimestamp") or event.get("eventTime")
-            if not ts_str:
+            dt = event.first_timestamp or event.event_time
+            if not dt:
                 continue
 
-            try:
-                ts = self._parse_iso(ts_str).timestamp()
-            except ValueError as e:
-                logger.warning(f"Invalid timestamp format: {ts_str} ({e})")
-                continue
+            ts = dt.timestamp()
 
             if reason == "Scheduled":
                 lifecycle["scheduled"] = ts
@@ -475,10 +461,6 @@ class ArboOptimizer:
             logger.debug(f"Lifecycle events for '{pod_name}': {loggable}")
 
         return lifecycle
-
-
-
-
 
 
     def _get_bearer_token(self) -> Optional[str]:
