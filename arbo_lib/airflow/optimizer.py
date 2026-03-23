@@ -6,7 +6,9 @@ from typing import Optional
 import requests
 from datetime import datetime
 from urllib import parse
+import json
 import re
+import subprocess
 
 from arbo_lib.core.estimator import ArboEstimator
 from arbo_lib.config import Config
@@ -14,12 +16,10 @@ from arbo_lib.utils.logger import get_logger
 
 logger = get_logger("arbo.optimizer")
 
-
 class ArboOptimizer:
     """
     Main entry point for Airflow DAGs; wraps estimator for easier usage
     """
-
     def __init__(self, namespace: str, is_local: bool = False):
         self.estimator = ArboEstimator()
 
@@ -34,18 +34,6 @@ class ArboOptimizer:
         self.password = Config.AIRFLOW_PASS
         self.bearer_token = None
         self.fmt = "%Y-%m-%dT%H:%M:%S.%fZ"
-
-    @staticmethod
-    def _compare_run_ids(id1: str, id2: str) -> bool:
-        """
-        Compares two run IDs by sanitizing them (removing non-alphanumeric characters and lowercasing).
-        This helps matching Airflow run_ids with sanitized Kubernetes labels.
-        """
-
-        def sanitize(s):
-            return re.sub(r'[^a-zA-Z0-9]', '', s).lower()
-
-        return sanitize(id1) == sanitize(id2)
 
     def get_task_configs(self, task_name: str, input_quantity: float, cluster_load: float = 0.0,
                          max_time_slo: float = None
@@ -112,25 +100,21 @@ class ArboOptimizer:
 
         if result is not None:
             actual_duration, start_up_time = result
-
-            if is_group:
-                pure_execution_duration = actual_duration - start_up_time
-            else:
-                pure_execution_duration = actual_duration
+            pure_execution_duration = actual_duration - start_up_time if is_group else actual_duration
         else:
             logger.info("Failed to query data, falling back to fallback duration")
             pure_execution_duration = fallback_duration
+            actual_duration = fallback_duration
             start_up_time = 0.0
 
-        logger.info(
-            f"Feedback '{task_name}': Exec={pure_execution_duration:.2f}s (K8s Overhead={start_up_time:.2f}s) vs Pred={predicted_amdahl + predicted_residual:.2f}s")
 
-        self.estimator.feedback(task_name, s, gamma, cluster_load, actual_duration, predicted_amdahl,
-                                predicted_residual, start_up_time)
+
+        logger.info(f"Feedback '{task_name}': Exec={pure_execution_duration:.2f}s (K8s Overhead={start_up_time:.2f}s) vs Pred={predicted_amdahl + predicted_residual:.2f}s")
+
+        self.estimator.feedback(task_name, s, gamma, cluster_load, actual_duration, predicted_amdahl, predicted_residual, start_up_time)
 
     @staticmethod
-    def get_filesize(endpoint_url: str, access_key: str, secret_key: str, bucket_name: str, file_key: str) -> Optional[
-        float]:
+    def get_filesize(endpoint_url: str, access_key: str, secret_key: str, bucket_name: str, file_key: str) -> Optional[float]:
         """
         Queries MinIO for file size
         :param endpoint_url: MinIO endpoint URL
@@ -156,9 +140,9 @@ class ArboOptimizer:
             logger.warning(f"MinIO Query Failed ({e}). Returning None")
             return None
 
+
     @staticmethod
-    def get_directory_size(endpoint_url: str, access_key: str, secret_key: str, bucket_name: str, prefix: str) -> \
-    Optional[float]:
+    def get_directory_size(endpoint_url: str, access_key: str, secret_key: str, bucket_name: str, prefix: str) -> Optional[float]:
         """
         Queries MinIO for directory size
         :param endpoint_url: MinIO endpoint URL
@@ -191,6 +175,8 @@ class ArboOptimizer:
             logger.warning(f"MinIO Query Failed ({e}). Returning None")
             return None
 
+
+
     def get_cluster_load(self, namespace: str = "default", ) -> float:
         """
         Queries Prometheus for actual CPU utilization across the cluster.
@@ -198,6 +184,7 @@ class ArboOptimizer:
         :return:
         """
         prometheus_url = f"http://prometheus-server.{namespace}.svc.cluster.local/api/v1/query"
+        # TODO: fix query (works with cAdvisor)
         query = '1 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m]))'
 
         try:
@@ -206,12 +193,13 @@ class ArboOptimizer:
             data = response.json()
             results = data.get("data", {}).get("result", [])
             if results:
-                logger.info(f"Prometheus Query Success: CPU Utilization is {results[0]['value'][1]}")
-                return float(results[0]['value'][1])
+                value = results[0]['value'][1]
+                logger.info(f"Prometheus Query Success: CPU Utilization is {value}")
+                return float(value)
             else:
                 logger.warning("Prometheus Query Succeeded but no results found.")
         except requests.exceptions.RequestException as e:
-            logger.warning(f"Prometheus HTTP Request Failed: {e}")
+                logger.warning(f"Prometheus HTTP Request Failed: {e}")
         except (KeyError, IndexError, ValueError) as e:
             logger.warning(f"Failed to parse Prometheus response: {e}")
         except Exception as e:
@@ -287,106 +275,211 @@ class ArboOptimizer:
             response = requests.get(url, headers=headers, timeout=5, params=params)
             response.raise_for_status()
             all_tasks = response.json().get("task_instances", [])
+        except Exception as e:
+            logger.error(f"Failed to get task instances ({e})")
+            return None
 
-            # Filter for tasks belonging to group
-            group_tasks = [
-                t for t in all_tasks
-                if t["task_id"] == group_id or t["task_id"].startswith(f"{group_id}.")
-            ]
+        # Filter for tasks belonging to group
+        group_tasks = [
+            t for t in all_tasks
+            if t["task_id"] == group_id or t["task_id"].startswith(f"{group_id}.")
+        ]
 
-            if not group_tasks:
-                logger.warning(f"No tasks found for group: {group_id}")
-                return None
 
-            queued_times = [self._parse_iso(t["queued_when"]) for t in group_tasks if t.get("queued_when")]
-            end_times = [self._parse_iso(t["end_date"]) for t in group_tasks if t.get("end_date")]
+        if not group_tasks:
+            logger.warning(f"No tasks found for group: {group_id}")
+            return None
 
-            if not queued_times or not end_times:
-                logger.warning("Group hasn't finished yet or tasks have no timing data.")
-                return None
 
-            group_queued = min(queued_times)
-            group_end = max(end_times)
-            total_wall_duration = (group_end - group_queued).total_seconds()
+        queued_times = [self._parse_iso(t["queued_when"]) for t in group_tasks if t.get("queued_when")]
+        end_times = [self._parse_iso(t["end_date"]) for t in group_tasks if t.get("end_date")]
 
-            # 2. Query Prometheus for K8s startup overhead
-            # Sanitize group_id for Prometheus label matching (dots/underscores often become dashes)
-            sanitized_group_prefix = re.sub(r'[^a-zA-Z0-9]', '.*', group_id)
-            prometheus_url = f"http://prometheus-server.{self.namespace}.svc.cluster.local/api/v1/query"
+        if not queued_times or not end_times:
+            logger.warning("Group hasn't finished yet or tasks have no timing data.")
+            return None
 
-            prom_query = (
-                f'('
-                f'max_over_time(kube_pod_start_time{{namespace="{self.namespace}"}}[1h])'
-                f' - on(pod, namespace) '
-                f'max_over_time(kube_pod_created{{namespace="{self.namespace}"}}[1h])'
-                f')'
-                f' * on(pod, namespace) group_left(label_dag_id, label_task_id, label_run_id, label_map_index) '
-                f'max_over_time(kube_pod_labels{{namespace="{self.namespace}", label_dag_id="{dag_id}", label_task_id=~"{sanitized_group_prefix}.*"}}[1h])'
-            )
+        group_queued = min(queued_times)
+        group_end = max(end_times)
+        total_wall_duration = (group_end - group_queued).total_seconds()
 
-            k8s_overheads = {}
-            try:
-                prom_resp = requests.get(prometheus_url, params={"query": prom_query}, timeout=10)
-                prom_resp.raise_for_status()
-                logger.info(f"Prometheus Resp: {prom_resp}")
-                results = prom_resp.json().get("data", {}).get("result", [])
+        # for each task resolve name and retrieve lifecycle
+        logger.info(f"\n--- Group Metrics for {group_id} ---")
 
-                logger.info(f"Raw Prometheus Results: {results}")
+        map_index_startups: Dict[int, float] = {}
 
-                for r in results:
-                    metric = r.get("metric", {})
-                    pod_run_id = metric.get("label_run_id")
-                    if pod_run_id and self._compare_run_ids(pod_run_id, dag_run_id):
-                        t_id = metric.get("label_task_id")
-                        m_idx = int(metric.get("label_map_index", -1))
-                        val = float(r.get("value", [0, 0])[1])
-                        k8s_overheads[(t_id, m_idx)] = val
-                        logger.debug(f"Prometheus: Task {t_id}[{m_idx}] K8s Overhead: {val:.2f}s")
-            except Exception as e:
-                logger.warning(f"Prometheus query failed: {e}")
+        for t in group_tasks:
+            if not (t.get("start_date") and t.get("end_date")):
+                continue
 
-            # 3. Calculate total startup overhead
-            map_index_startups = {}
-            logger.info(f"\n--- Metrics for Group: {group_id} ---")
-            for t in group_tasks:
-                if t.get("start_date") and t.get("queued_when"):
-                    airflow_start = self._parse_iso(t["start_date"])
-                    airflow_queued = self._parse_iso(t["queued_when"])
-                    airflow_delay = (airflow_start - airflow_queued).total_seconds()
+            task_id = t["task_id"]
+            mi = t.get("map_index", -1)
 
-                    mi = t.get("map_index", -1)
-                    # Try to find K8s overhead (accounting for label sanitization in matching)
-                    k8s_val = 0.0
-                    for (task_id_key, m_idx_key), val in k8s_overheads.items():
-                        if m_idx_key == mi and (
-                                task_id_key == t["task_id"] or task_id_key.replace("-", "_") == t["task_id"].replace(
-                                ".", "_")):
-                            k8s_val = val
-                            break
+            airflow_queued = self._parse_iso(t["queued_when"])
+            airflow_start = self._parse_iso(t["start_date"])
+            airflow_delay = (airflow_start - airflow_queued).total_seconds()
 
-                    total_task_startup = airflow_delay + k8s_val
-                    map_index_startups[mi] = map_index_startups.get(mi, 0.0) + total_task_startup
+            pod_name = self._resolve_pod_name(dag_id, dag_run_id, task_id, mi)
 
-                    logger.info(
-                        f"  Task: {t['task_id']:.<40} Index: {mi:<3} | AF Delay: {airflow_delay:>6.2f}s | K8s: {k8s_val:>6.2f}s | Total: {total_task_startup:>6.2f}s")
+            k8s_startup = 0.0
+            pull_time = 0.0
 
-            if map_index_startups:
-                avg_group_startup_time = sum(map_index_startups.values()) / len(map_index_startups)
-                logger.info(
-                    f"Summary: Wall={total_wall_duration:.2f}s, Avg Startup={avg_group_startup_time:.2f}s (across {len(map_index_startups)} indices)")
+            if pod_name:
+                lifecycle = self._get_pod_lifecycle_events(pod_name)
+
+                if "scheduled" in lifecycle and "started" in lifecycle:
+                    k8s_startup = lifecycle["started"] - lifecycle["scheduled"]
+
+                    if "pull_duration" in lifecycle:
+                        pull_time = lifecycle["pull_duration"]
+                    elif "pulling" in lifecycle and "pulled" in lifecycle:
+                        pull_time = lifecycle["pulled"] - lifecycle["pulling"]
+                else:
+                    logger.warning(f"Pod {pod_name} has no lifecycle events. Falling back to only Airflow delay.")
+
             else:
-                avg_group_startup_time = 0.0
-                logger.warning("No timing data available for any tasks in the group.")
+                logger.warning("Could not resolve pod name for task. Falling back to only Airflow delay.")
 
-            return total_wall_duration, avg_group_startup_time
+            total_task_startup = airflow_delay + k8s_startup
+            map_index_startups[mi] = total_task_startup
 
+            logger.info(f"Task: {task_id} AF delay: {airflow_delay:.2f}s, K8s Startup: {k8s_startup:.2f}s, Pod Pull: {pull_time:.2f}s")
+
+        if map_index_startups:
+            avg_group_startup_time = sum(map_index_startups.values()) / len(map_index_startups)
+        else:
+            avg_group_startup_time = 0.0
+            logger.warning("No startup data available for this group.")
+
+        return total_wall_duration, avg_group_startup_time
+
+
+    def _resolve_pod_name(self, dag_id: str, dag_run_id: str, task_id: str, map_index: int) -> Optional[str]:
+        """Resolve k8s pod name for a given task instance"""
+        safe_run_id = parse.quote(dag_run_id)
+        headers = {
+            "Authorization": f"Bearer {self.bearer_token}",
+            "Content-Type": "application/json"
+        }
+
+        map_index_param = {"map_index": map_index} if map_index >= 0 else {}
+
+        # get pod name from xcom
+        try:
+            url = f"{self.base_url}/api/v2/dags/{dag_id}/dagRuns/{safe_run_id}/taskInstances/{task_id}/xcomEntries/pod_name"
+            resp = requests.get(url, headers=headers, timeout=5, params=map_index_param)
+            if resp.ok:
+                pod_name = resp.json().get("value")
+                if pod_name:
+                    logger.info(f"Resolved pod name for {task_id}: {pod_name}")
+                    return pod_name
         except Exception as e:
-            logger.error(f"Failed to get group metrics ({e})")
-            return None
+            logger.warning(f"Failed to resolve pod name from xcom ({e})")
 
+        # rendered fields
+        try:
+            url = f"{self.base_url}/api/v2/dags/{dag_id}/dagRuns/{safe_run_id}/taskInstances/{task_id}/renderedFields"
+            resp = requests.get(url, headers=headers, timeout=5, params=map_index_param)
+            if resp.ok:
+                fields = resp.json().get("rendered_fields", {})
+                pod_name = fields.get("name") or fields.get("pod_name")
+                if pod_name:
+                    logger.info(f"Resolved pod name from rendered fields for {task_id}: {pod_name}")
+                    return pod_name
         except Exception as e:
-            logger.error(f"Failed to get group metrics ({e})")
-            return None
+            logger.warning(f"Failed to resolve pod name from rendered fields ({e})")
+
+
+        logger.warning(f"Failed to resolve pod name for {task_id}")
+        return None
+
+    def _get_pod_lifecycle_events(self, pod_name: str) -> Dict[str, float]:
+        """Query kubectl for pod's lifecycle events"""
+        try:
+            results = subprocess.run(
+                [
+                    "kubectl", "get", "events", "-n", self.namespace, "--field-selector",
+                    f"involvedObject.name={pod_name}", "-o", "json",
+                ],
+                capture_output=True, text=True, timeout=15
+            )
+        except FileNotFoundError:
+            logger.warning("kubectl command not found")
+            return {}
+        except subprocess.TimeoutExpired:
+            logger.warning("kubectl command timed out")
+            return {}
+        except Exception as e:
+            logger.warning(f"Failed to query kubectl for pod lifecycle events ({e})")
+            return {}
+
+        if results.returncode != 0:
+            logger.warning(f"kubectl command failed with exit code {results.returncode}")
+            return {}
+
+        try:
+            items = json.loads(results.stdout).get("items", [])
+        except json.JSONDecodeError:
+            logger.warning("Invalid JSON output from kubectl")
+            return {}
+
+        lifecycle: Dict[str, float] = {}
+
+        for event in items:
+            reason = event.get("reason", "")
+
+            ts_str = event.get("firstTimestamp") or event.get("eventTime")
+            if not ts_str:
+                continue
+
+            try:
+                ts = self._parse_iso(ts_str).timestamp()
+            except ValueError as e:
+                logger.warning(f"Invalid timestamp format: {ts_str} ({e})")
+                continue
+
+            if reason == "Scheduled":
+                lifecycle["scheduled"] = ts
+
+            elif reason == "Pulling":
+                if "pulling" not in lifecycle or ts < lifecycle["pulling"]:
+                    lifecycle["pulling"] = ts
+
+            elif reason == "Pulled":
+                lifecycle["pulled"] = ts
+
+                # try to read pull duration from message
+                msg = event.get("message", "")
+                match = re.search(r'in ([\d.]+)(ms|s)', msg)
+                if match:
+                    try:
+                        value = float(match.group(1))
+                        unit = match.group(2)
+                        # Normalise to seconds
+                        lifecycle["pull_duration"] = value / 1000.0 if unit == "ms" else value
+                    except ValueError:
+                        pass
+
+            elif reason == "Created":
+                lifecycle["created"] = ts
+
+            elif reason == "Started":
+                lifecycle["started"] = ts
+
+        if not lifecycle:
+            logger.warning("No lifecycle events found for this pod")
+        else:
+            loggable = {
+                k: (datetime.fromtimestamp(v).isoformat() if k != "pull_duration" else f"{v:.3f}s")
+                for k, v in sorted(lifecycle.items())
+            }
+            logger.debug(f"Lifecycle events for '{pod_name}': {loggable}")
+
+        return lifecycle
+
+
+
+
+
 
     def _get_bearer_token(self) -> Optional[str]:
         """
@@ -405,6 +498,7 @@ class ArboOptimizer:
         except Exception as e:
             logger.warning(f"Authentication Failed ({e})")
             return None
+
 
     @staticmethod
     def get_virtual_memory() -> float:
