@@ -17,10 +17,12 @@ from arbo_lib.utils.logger import get_logger
 
 logger = get_logger("arbo.optimizer")
 
+
 class ArboOptimizer:
     """
     Main entry point for Airflow DAGs; wraps estimator for easier usage
     """
+
     def __init__(self, namespace: str, is_local: bool = False):
         self.estimator = ArboEstimator()
 
@@ -99,15 +101,10 @@ class ArboOptimizer:
             result = self._get_task_duration(dag_id, run_id, target_id)
 
         if result is not None:
-            actual_duration, start_up_time, pull_time = result
-            if is_group:
-                # Group duration from _get_task_group_metrics already includes startup overhead (min_queued to max_end)
-                t_total = actual_duration
-                pure_execution_duration = actual_duration - start_up_time
-            else:
-                # Individual duration from _get_task_duration is (end - start), so we add start_up_time to get total
-                t_total = actual_duration + start_up_time
-                pure_execution_duration = actual_duration
+            t_total, start_up_time, pull_time = result
+            # t_total is always the full wall time (end - queued)
+            # pure_execution is the estimated computation time
+            pure_execution_duration = max(0.1, t_total - start_up_time)
         else:
             logger.info("Failed to query data, falling back to fallback duration")
             t_total = fallback_duration
@@ -115,9 +112,8 @@ class ArboOptimizer:
             start_up_time = 0.0
             pull_time = 0.0
 
-
-
-        logger.info(f"Feedback '{task_name}': Exec={pure_execution_duration:.2f}s (K8s Overhead={start_up_time:.2f}s, Pull={pull_time:.2f}s) vs Pred={predicted_amdahl + predicted_residual:.2f}s")
+        logger.info(
+            f"Feedback '{task_name}': Exec={pure_execution_duration:.2f}s (Overhead={start_up_time:.2f}s, Pull={pull_time:.2f}s) vs Pred={predicted_amdahl + predicted_residual:.2f}s")
 
         self.estimator.feedback(
             task_name=task_name, s=s, gamma=gamma, cluster_load=cluster_load,
@@ -127,7 +123,8 @@ class ArboOptimizer:
         )
 
     @staticmethod
-    def get_filesize(endpoint_url: str, access_key: str, secret_key: str, bucket_name: str, file_key: str) -> Optional[float]:
+    def get_filesize(endpoint_url: str, access_key: str, secret_key: str, bucket_name: str, file_key: str) \
+            -> Optional[float]:
         """
         Queries MinIO for file size
         :param endpoint_url: MinIO endpoint URL
@@ -153,9 +150,9 @@ class ArboOptimizer:
             logger.warning(f"MinIO Query Failed ({e}). Returning None")
             return None
 
-
     @staticmethod
-    def get_directory_size(endpoint_url: str, access_key: str, secret_key: str, bucket_name: str, prefix: str) -> Optional[float]:
+    def get_directory_size(endpoint_url: str, access_key: str, secret_key: str, bucket_name: str, prefix: str) -> \
+    Optional[float]:
         """
         Queries MinIO for directory size
         :param endpoint_url: MinIO endpoint URL
@@ -188,8 +185,6 @@ class ArboOptimizer:
             logger.warning(f"MinIO Query Failed ({e}). Returning None")
             return None
 
-
-
     def get_cluster_load(self, namespace: str = "default", ) -> float:
         """
         Queries Prometheus for actual CPU utilization across the cluster.
@@ -214,7 +209,7 @@ class ArboOptimizer:
             else:
                 logger.warning("Prometheus Query Succeeded but no results found.")
         except requests.exceptions.RequestException as e:
-                logger.warning(f"Prometheus HTTP Request Failed: {e}")
+            logger.warning(f"Prometheus HTTP Request Failed: {e}")
         except (KeyError, IndexError, ValueError) as e:
             logger.warning(f"Failed to parse Prometheus response: {e}")
         except Exception as e:
@@ -228,17 +223,15 @@ class ArboOptimizer:
         # TODO: docu
         return datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
 
-
-    # TODO: check if actually used
     def _get_task_duration(self, dag_id: str, dag_run_id: str, task_id: str) -> Optional[tuple[float, float, float]]:
         """
-        Retrieve the duration, startup time, and pull time of a specific task instance in a DAG run.
+        Retrieve the wall duration (end-queued), overhead (delay+k8s), and pull time for a single task.
+        Returns: (wall_duration, total_overhead, pull_time)
 
         :param dag_id: The unique identifier of the DAG.
         :param dag_run_id: The unique identifier of the DAG run.
         :param task_id: The unique identifier of the task within the DAG.
-        :return: A tuple containing the task duration (in seconds), startup time
-                 (in seconds), and pull time (in seconds) or None if the request fails.
+        :return: (wall_duration, total_overhead, pull_time)
         """
         safe_run_id = parse.quote(dag_run_id)
         headers = {
@@ -255,11 +248,14 @@ class ArboOptimizer:
             return None
 
         data = response.json()
-        duration = data.get("duration")
         queued = self._parse_iso(data.get('queued_when'))
         start = self._parse_iso(data.get('start_date'))
         end = self._parse_iso(data.get('end_date'))
 
+        # total wall clock duration: End to Queued
+        wall_duration = (end - queued).total_seconds()
+
+        # airflow overhead
         airflow_delay = (start - queued).total_seconds()
 
         # resolve pod name and get k8s events
@@ -276,24 +272,18 @@ class ArboOptimizer:
                 elif "pulling" in lifecycle and "pulled" in lifecycle:
                     pull_time = lifecycle["pulled"] - lifecycle["pulling"]
 
-        total_startup_time = airflow_delay + k8s_startup
-
-        if duration is None:
-            logger.warning("Failed to compute task duration")
-            return None
+        total_overhead = airflow_delay + k8s_startup
 
         logger.info(f"\n--- Task: {task_id} ---")
-        logger.info(f"Task Start:          {start}")
-        logger.info(f"Task End:            {end}")
-        logger.info(f"Total Wall Duration:  {duration:.4f}s")
-        logger.info(f"Total Startup Time:   {total_startup_time:.4f}s (K8s: {k8s_startup:.2f}s, Pull: {pull_time:.2f}s)")
+        logger.info(f"Total Wall Duration:  {wall_duration:.4f}s")
+        logger.info(f"Total Overhead:       {total_overhead:.4f}s (K8s: {k8s_startup:.2f}s, Pull: {pull_time:.2f}s)")
 
-        return duration, total_startup_time, pull_time
+        return wall_duration, total_overhead, pull_time
 
-    def _get_task_group_metrics(self, dag_id: str, dag_run_id: str, group_id: str) -> Optional[tuple[float, float, float]]:
+    def _get_task_group_metrics(self, dag_id: str, dag_run_id: str, group_id: str) -> Optional[
+        tuple[float, float, float]]:
         """
-        Retrieves and calculates metrics for a specific task group within a DAG run.
-        Includes K8s startup overhead (scheduling, image pulling) by querying Prometheus.
+        Retrieves metrics for a specific task group within a DAG run.
         Returns: (total_wall_duration, avg_group_startup_time, avg_pull_time)
         """
         safe_run_id = parse.quote(dag_run_id)
@@ -320,11 +310,9 @@ class ArboOptimizer:
             if t["task_id"] == group_id or t["task_id"].startswith(f"{group_id}.")
         ]
 
-
         if not group_tasks:
             logger.warning(f"No tasks found for group: {group_id}")
             return None
-
 
         queued_times = [self._parse_iso(t["queued_when"]) for t in group_tasks if t.get("queued_when")]
         end_times = [self._parse_iso(t["end_date"]) for t in group_tasks if t.get("end_date")]
@@ -379,7 +367,8 @@ class ArboOptimizer:
             map_index_startups[mi] += total_task_startup
             map_index_pulls[mi] += pull_time
 
-            logger.info(f"Task: {task_id} AF delay: {airflow_delay:.2f}s, K8s Startup: {k8s_startup:.2f}s, Pod Pull: {pull_time:.2f}s")
+            logger.info(
+                f"Task: {task_id} AF delay: {airflow_delay:.2f}s, K8s Startup: {k8s_startup:.2f}s, Pod Pull: {pull_time:.2f}s")
 
         if map_index_startups:
             avg_group_startup_time = sum(map_index_startups.values()) / len(map_index_startups)
@@ -390,7 +379,6 @@ class ArboOptimizer:
             logger.warning("No startup data available for this group.")
 
         return total_wall_duration, avg_group_startup_time, avg_pull_time
-
 
     def _resolve_pod_name(self, dag_id: str, dag_run_id: str, task_id: str, map_index: int) -> Optional[str]:
         """Resolve k8s pod name for a given task instance"""
@@ -427,7 +415,6 @@ class ArboOptimizer:
         except Exception as e:
             logger.warning(f"Failed to resolve pod name from rendered fields ({e})")
 
-
         logger.warning(f"Failed to resolve pod name for {task_id}")
         return None
 
@@ -441,7 +428,8 @@ class ArboOptimizer:
 
             v1 = client.CoreV1Api()
 
-            events = v1.list_namespaced_event(namespace=self.namespace, field_selector=f"involvedObject.name={pod_name}")
+            events = v1.list_namespaced_event(namespace=self.namespace,
+                                              field_selector=f"involvedObject.name={pod_name}")
         except ApiException as e:
             logger.warning(f"Kubernetes API Exception when querying events: {e}")
             return {}
@@ -499,7 +487,6 @@ class ArboOptimizer:
 
         return lifecycle
 
-
     def _get_bearer_token(self) -> Optional[str]:
         """
         Gets bearer token for Airflow API
@@ -517,7 +504,6 @@ class ArboOptimizer:
         except Exception as e:
             logger.warning(f"Authentication Failed ({e})")
             return None
-
 
     @staticmethod
     def get_virtual_memory() -> float:
