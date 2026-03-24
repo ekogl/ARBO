@@ -15,3 +15,4 @@ class Config:
     KAPPA = os.getenv("KAPPA", 1.0)
 
     DEFAULT_STARTUP = 6.0
+    DEFAULT_ALPHA_C = 0.5

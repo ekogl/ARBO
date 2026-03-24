@@ -4,6 +4,7 @@ CREATE TABLE task_models (
     p_obs REAL,               -- Current dynamic parallelizable portion
     c_startup REAL,           -- Fixed overhead (e.g., pod spin-up)
     alpha_p REAL DEFAULT 0.7,   -- Learning rate for p_obs
+    alpha_c REAL DEFAULT 0.5,   -- Learning rate for c_startup
     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     base_input_quantity FLOAT DEFAULT 1,
     alpha_k REAL DEFAULT 0.8,   -- learning rate for k

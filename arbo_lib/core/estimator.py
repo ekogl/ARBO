@@ -107,7 +107,8 @@ class ArboEstimator:
 
     def feedback(
             self, task_name: str, s: int, gamma: float, cluster_load: float, t_actual: float,
-            predicted_amdahl: float, predicted_residual: float, dynamic_c_startup: float
+            predicted_amdahl: float, predicted_residual: float, dynamic_c_startup: float,
+            pull_time: float = 0.0
     ) -> None:
         """
         Learning loop: updates parameters and saves execution
@@ -115,10 +116,11 @@ class ArboEstimator:
         :param s: degree of parallelism
         :param gamma: input scaling factor
         :param cluster_load: metric representing the cluster load
-        :param t_actual: actual execution time of the task
+        :param t_actual: actual execution time of the task (including overhead)
         :param predicted_amdahl: predicted execution time based on Amdahl's Law
         :param predicted_residual: predicted residual (overhead) by the GP
-        :param dynamic_c_startup: dynamic startup time constant
+        :param dynamic_c_startup: dynamic startup time constant (total overhead)
+        :param pull_time: portion of dynamic_c_startup spent pulling images
         :return: None
         """
 
@@ -128,7 +130,11 @@ class ArboEstimator:
             try:
                 params = self.store.get_task_model(task_name)
 
-                c_startup_used = dynamic_c_startup if dynamic_c_startup > 0 else params["c_startup"]
+                # Total overhead used to isolate pure computation
+                c_startup_total = dynamic_c_startup if dynamic_c_startup > 0 else params["c_startup"]
+
+                # Warm overhead (excluding pull) used to update the model for next runs
+                c_startup_warm = max(0.1, dynamic_c_startup - pull_time) if dynamic_c_startup > 0 else params["c_startup"]
 
                 current_version = params["sample_count"] if params else 0
 
@@ -142,8 +148,13 @@ class ArboEstimator:
                             task_name, s, gamma, cluster_load, t_actual, residual=0, cost=cost, p_snapshot=1.0,
                             predicted_amdahl=predicted_amdahl, predicted_residual=predicted_residual
                         )
-                        self.store.update_baseline(task_name, t_actual)
-                        self.store.update_model(task_name, new_p=1, new_k=1, run_data=run_data, expected_version=0)
+                        # subtract startup overhead to get clean baseline
+                        pure_t_base = max(0.1, t_actual - c_startup_total)
+                        self.store.update_baseline(task_name, pure_t_base)
+                        self.store.update_model(
+                            task_name, new_p=1, new_k=1, new_c_startup=c_startup_warm,
+                            run_data=run_data, expected_version=0
+                        )
                         return
                     except TaskAlreadyExistsError:
                         # TODO: properly handle exception
@@ -154,11 +165,18 @@ class ArboEstimator:
 
                 current_k = params["k_exponent"]
 
-                # infer p
+                # update c_startup moving average using WARM values
+                new_c_startup = AmdahlUtils.update_moving_average(
+                    old_val=params["c_startup"],
+                    current_val=c_startup_warm,
+                    alpha=params["alpha_c"]
+                )
+
+                # infer p using TOTAL overhead
                 p_current = AmdahlUtils.calculate_current_p(
                     s=s,
                     t_actual=t_actual,
-                    c_startup=c_startup_used,
+                    c_startup=c_startup_total,
                     t_base=params["t_base_1"],
                     gamma=gamma,
                     k=current_k
@@ -175,7 +193,7 @@ class ArboEstimator:
                     s=s,
                     t_base=params["t_base_1"],
                     t_actual=t_actual,
-                    c_startup=c_startup_used,
+                    c_startup=c_startup_total,
                     gamma=gamma,
                     p=new_p
                 )
@@ -191,7 +209,7 @@ class ArboEstimator:
                 t_theory = AmdahlUtils.calculate_theoretical_time(
                     s=s,
                     t_base=params["t_base_1"],
-                    c_startup=c_startup_used,
+                    c_startup=c_startup_total,
                     gamma=gamma,
                     p=new_p,
                     k=new_k
@@ -205,7 +223,8 @@ class ArboEstimator:
                     residual, cost, new_p, predicted_amdahl, predicted_residual
                 )
                 self.store.update_model(
-                    task_name, new_p=new_p, run_data=run_data, new_k=new_k, expected_version=current_version
+                    task_name, new_p=new_p, new_k=new_k, new_c_startup=new_c_startup,
+                    run_data=run_data, expected_version=current_version
                 )
 
                 return

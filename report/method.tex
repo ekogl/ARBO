@@ -13,8 +13,22 @@
 \usepackage{hyperref}       % Clickable links
 \usepackage{parskip}        % Nice spacing between paragraphs
 \usepackage{subcaption}
+
 \usepackage{tikz}
-\usetikzlibrary{shapes, arrows.meta, positioning, calc, shadows}
+\usetikzlibrary{shapes.geometric, arrows, positioning, calc}
+
+% Define global styles once for all diagrams
+\tikzset{
+	cloud/.style={draw, ellipse, fill=blue!10, node distance=3cm, minimum height=2em},
+	block/.style={draw, rectangle, fill=gray!10, rounded corners, minimum width=3cm, minimum height=2.5em},
+	database/.style={draw, cylinder, fill=orange!10, shape border rotate=90, minimum width=2cm, minimum height=2.5em},
+	arrow/.style={thick,->,>=stealth},
+	dashed arrow/.style={thick,->,dashed,>=stealth},
+	decision/.style={draw, diamond, aspect=2, fill=orange!10, inner sep=0pt}
+}
+
+% Fix for fancyhdr warning
+\setlength{\headheight}{15pt}
 
 % --- Header/Footer Customization (Optional) ---
 \usepackage{fancyhdr}
@@ -29,6 +43,8 @@
 	\large{Use Case Analysis and Performance Projections}}
 \author{\textbf{Your Name} \\ Student ID: 12345678}
 \date{\today}
+
+\DeclareMathOperator*{\argmin}{arg\,min}
 
 \begin{document}
 	
@@ -942,5 +958,114 @@
 	
 	
 	
+	\begin{figure}[ht]
+		\centering
+		\begin{tikzpicture}[node distance=1.5cm, every node/.style={transform shape}, scale=0.85]
+			
+			% Styles
+			\tikzset{dashed arrow/.style={thick, dashed, ->, >=stealth}}
+			
+			% Nodes
+			\node [block] (airflow) {\textbf{Airflow Orchestrator}};
+			\node [block, right=of airflow, xshift=2.5cm] (optimizer) {\textbf{ArboOptimizer}};
+			\node [block, below=of airflow, yshift=-1.8cm] (workers) {K8s Workers ($s_{opt}$)};
+			
+			\node [cloud, above=of optimizer, xshift=-2.3cm] (prometheus) {Prometheus ($L_{cluster}$)};
+			\node [cloud, above=of optimizer, xshift=2.3cm] (minio) {MinIO ($\gamma$)};
+			
+			\node [block, below=of optimizer] (estimator) {ArboEstimator};
+			\node [database, below=of estimator] (postgres) {PostgreSQL};
+			
+			% Observability (Context Gathering)
+			\draw [dashed arrow] (prometheus) -- node[left, font=\tiny] {HTTP Query} (optimizer.north west);
+			\draw [dashed arrow] (minio) -- node[right, font=\tiny] {boto3/S3 Head} (optimizer.north east);
+			
+			% Main Prediction Path
+			\draw [arrow] (airflow.20) to [bend left=25] node[above, font=\tiny] {1. predict()} (optimizer.160);
+			\draw [arrow] (optimizer.200) to [bend left=25] node[below, font=\tiny] {2. s\_opt configs} (airflow.340);
+			\draw [arrow] (airflow) -- node[left, font=\tiny] {3. expand()} (workers);
+			
+			% The Specific Feedback Path requested
+			\draw [arrow] (workers.west) -- ++ (-0.8,0) |- node[pos=0.25, left, font=\tiny, align=center] {4. Success Trigger} (airflow.west);
+			
+			\draw [arrow] (airflow.310) -- ++(1.5,-0.8) |- node[pos=0.6, above, font=\tiny] {5. report\_success() / API Query} (optimizer.west);
+			
+			\draw [arrow] (optimizer) -- node[right, font=\tiny] {6. feedback()} (estimator);
+			\draw [arrow] (estimator) -- node[right, font=\tiny] {7. update\_model()} (postgres);
+			
+			% DB Context
+			\draw [arrow, bend right=40] (postgres.east) to node[right, font=\tiny] {Model Retrieval} (estimator.east);
+			
+		\end{tikzpicture}
+		\caption{The ARBO Feedback Loop: Orchestrated metrics retrieval from Airflow to persistent storage.}
+	\end{figure}
+	
+	\usetikzlibrary{arrows.meta, positioning}
+	
+	\begin{figure}[ht]
+		\centering
+		\begin{tikzpicture}[
+			node distance=1.5cm and 1cm,
+			font=\small,
+			>=stealth,
+			mathnode/.style={
+				draw, rectangle, rounded corners=3pt, thick, align=center,
+				minimum height=1.2cm, inner sep=8pt
+			}
+			]
+			
+			% Input
+			\node[mathnode, fill=gray!10] (input) {\textbf{Input Context} \\ $\gamma$ (Scale), $L_{cluster}$ (Load)};
+			
+			% The Split (Mechanistic vs Stochastic)
+			\coordinate[below=1cm of input] (fork);
+			
+			\node[mathnode, fill=blue!10, below left=0.5cm and 0.5cm of fork] (amdahl) {
+				\textbf{Mechanistic Baseline} \\ 
+				$T_{Amdahl}(s, \gamma) = C_{startup} + \gamma^k \left[ \dots \right]$
+			};
+			
+			\node[mathnode, fill=green!10, below right=0.5cm and 0.5cm of fork] (gp) {
+				\textbf{Stochastic Residual} \\ 
+				$GP(\mathbf{x}) \to \mu_{res}, \sigma_{res}^2$
+			};
+			
+			% Convergence
+			\node[mathnode, fill=purple!10, below=3.5cm of input] (total) {
+				\textbf{Probabilistic Prediction} \\
+				$P(s) \sim \mathcal{N}(T_{Amdahl} + \mu_{res}, \, \sigma_{res}^2)$
+			};
+			
+			% Acquisition Function
+			\node[mathnode, fill=orange!10, below=1cm of total] (acquisition) {
+				\textbf{Acquisition Function} \\
+				$t_{acq} = (T_{Amdahl} + \mu_{res}) + \kappa \cdot \sigma_{res}$
+			};
+			
+			% Optimizer / Argmin
+			\node[decision, below=1cm of acquisition, minimum width=3cm] (argmin) {
+				$\displaystyle \argmin_{s \in [1, S_{limit}]} \left( t_{acq} \cdot \sqrt{s} \right)$
+			};
+			
+			% Output
+			\node[below=1cm of argmin, font=\bfseries] (output) {Optimal Configuration ($s_{opt}$)};
+			
+			% --- Arrows ---
+			\draw[->, thick] (input.south) -- (fork) -| (amdahl.north);
+			\draw[->, thick] (input.south) -- (fork) -| (gp.north);
+			
+			\draw[->, thick] (amdahl.south) |- (total.170);
+			\draw[->, thick] (gp.south) |- (total.10);
+			
+			\draw[->, thick] (total.south) -- (acquisition.north);
+			\draw[->, thick] (acquisition.south) -- (argmin.north);
+			\draw[->, thick] (argmin.south) -- (output.north);
+			
+		\end{tikzpicture}
+		\caption{Hybrid predictive decision flow. The deterministic baseline and stochastic residual are merged into a probabilistic distribution, which is evaluated via an acquisition cost function to yield the optimal parallelism degree.}
+		\label{fig:math_flow}
+	\end{figure}
+	
+
 	
 \end{document}
