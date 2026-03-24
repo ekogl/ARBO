@@ -6,9 +6,7 @@ from typing import Optional
 import requests
 from datetime import datetime
 from urllib import parse
-import json
 import re
-import subprocess
 from kubernetes import client, config
 from collections import defaultdict
 from kubernetes.client.exceptions import ApiException
@@ -94,7 +92,6 @@ class ArboOptimizer:
         :return: None
         """
         self.bearer_token = self._get_bearer_token()
-        actual_duration = None
 
         if is_group:
             result = self._get_task_group_metrics(dag_id, run_id, target_id)
@@ -186,6 +183,7 @@ class ArboOptimizer:
         :param namespace: namespace of the Prometheus instance
         :return:
         """
+        # TODO: change query
         prometheus_url = f"http://prometheus-server.{namespace}.svc.cluster.local/api/v1/query"
         # TODO: fix query (works with cAdvisor)
         query = '1 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m]))'
@@ -213,8 +211,11 @@ class ArboOptimizer:
 
     @staticmethod
     def _parse_iso(dt_str: str) -> datetime:
+        # TODO: docu
         return datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
 
+
+    # TODO: check if actually used
     def _get_task_duration(self, dag_id: str, dag_run_id: str, task_id: str) -> Optional[tuple[float, float]]:
         """
         Retrieve the duration and startup time of a specific task instance in a DAG run.
@@ -270,7 +271,7 @@ class ArboOptimizer:
             "Content-Type": "application/json"
         }
 
-        # 1. Get task instances from Airflow API
+        # get task instances from airflow api
         params = {"limit": 1000}
         url = f"{self.base_url}/api/v2/dags/{dag_id}/dagRuns/{safe_run_id}/taskInstances"
 
@@ -441,7 +442,7 @@ class ArboOptimizer:
                     try:
                         value = float(match.group(1))
                         unit = match.group(2)
-                        # Normalise to seconds
+                        # convert to seconds
                         lifecycle["pull_duration"] = value / 1000.0 if unit == "ms" else value
                     except ValueError:
                         pass
